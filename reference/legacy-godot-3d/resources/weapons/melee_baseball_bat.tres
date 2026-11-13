@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/weapon_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = "baseball_bat"
+display_name = "Baseball Bat"
+category = 0
+# PZ-extracted: BaseballBat MinDmg=0.8 MaxDmg=1.1 ×16.7 → 13–18 HP; SwingTime=3.0s; MaxRange=1.25
+damage = 15.0
+knockback_force = 8.0
+stun_duration = 0.5
+stamina_cost = 22.0
+attack_duration = 0.4
+attack_cooldown = 3.0
+reach = 1.25
+noise_radius = 9.0
+mesh_path = "res://assets/weapons/tool-hammer.glb"
+mesh_scale = Vector3(1.1, 1.1, 1.1)
+mesh_rotation_degrees = Vector3(0, 0, -25)
+mesh_offset = Vector3(0, 0.1, -0.15)
+preview_color = Color(0.76, 0.55, 0.32, 1)

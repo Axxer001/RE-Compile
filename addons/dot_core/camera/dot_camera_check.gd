@@ -1,0 +1,145 @@
+class_name DotCameraCheck
+extends RefCounted
+
+## Flies a camera along a scripted path through a real level and counts the frames it ended inside geometry.
+## Armed by construction: [method passed] needs the unprotected camera inside the level on some frames
+## and the [DotCameraProbe] one on none, and fails a probe that snapped a third of a metre in one frame.
+
+## One turn of the view round [param pivot] over [param frames] frames, pitch swinging between
+## [param pitch_low] and [param pitch_high] (radians; negative looks down), so the camera passes
+## over every wall and under any roof near the pivot.
+static func orbit_path(
+	pivot: Vector3, frames: int = 180, pitch_low: float = -0.6, pitch_high: float = 0.35
+) -> Array[Transform3D]:
+	var out: Array[Transform3D] = []
+	for i in frames:
+		var t := float(i) / float(maxi(frames - 1, 1))
+		var yaw := TAU * t
+		var pitch := lerpf(pitch_low, pitch_high, 0.5 - 0.5 * cos(t * TAU * 2.0))
+		out.append(Transform3D(Basis.from_euler(Vector3(pitch, yaw, 0.0)), pivot))
+	return out
+
+
+## A walk from [param from] to [param to] over [param frames] frames, looking along
+## [param yaw] (radians) while swinging [param swing] either side of it.
+static func walk_path(
+	from: Vector3, to: Vector3, frames: int = 180, yaw: float = 0.0, swing: float = 0.8
+) -> Array[Transform3D]:
+	var out: Array[Transform3D] = []
+	for i in frames:
+		var t := float(i) / float(maxi(frames - 1, 1))
+		var y := yaw + sin(t * TAU * 1.5) * swing
+		out.append(Transform3D(Basis.from_euler(Vector3(-0.2, y, 0.0)), from.lerp(to, t)))
+	return out
+
+
+## Eye points worth flying round: a grid over [param bounds] dropped onto the floor, kept where the
+## eye is clear and a wall is within [param near] metres, at most [param count], nearest walls first.
+static func pivots_near_walls(
+	world: World3D, bounds: AABB, mask: int, eye_height: float = 1.6,
+	step: float = 3.0, near: float = 3.0, count: int = 40
+) -> Array[Vector3]:
+	var space := world.direct_space_state
+	var found: Array = []
+	var x := bounds.position.x
+	while x <= bounds.end.x:
+		var z := bounds.position.z
+		while z <= bounds.end.z:
+			var top := Vector3(x, bounds.end.y, z)
+			var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(top, Vector3(x, bounds.position.y, z), mask))
+			if not hit.is_empty():
+				var eye: Vector3 = (hit["position"] as Vector3) + Vector3.UP * eye_height
+				if not DotCameraProbe.is_inside(space, eye, 0.3, mask):
+					var nearest := INF
+					for i in 8:
+						var angle := TAU * float(i) / 8.0
+						var to := eye + Vector3(sin(angle), 0.0, cos(angle)) * near
+						var wall := space.intersect_ray(PhysicsRayQueryParameters3D.create(eye, to, mask))
+						if not wall.is_empty():
+							nearest = minf(nearest, eye.distance_to(wall["position"] as Vector3))
+					if nearest < near:
+						found.append([nearest, eye])
+			z += step
+		x += step
+	found.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+	var out: Array[Vector3] = []
+	for entry in found.slice(0, count):
+		out.append(entry[1])
+	return out
+
+
+## Flies a fresh [DotCameraProbe] along [param path]: each transform is a pivot and the
+## view's axes, and the camera wants to be at `origin + basis * offset`. Returns the counts.
+static func fly(
+	world: World3D,
+	path: Array[Transform3D],
+	offset: Vector3,
+	mask: int,
+	exclude: Array[RID] = [],
+	radius: float = 0.2,
+	delta: float = 1.0 / 60.0
+) -> Dictionary:
+	var probe := DotCameraProbe.new(world, mask)
+	probe.radius = radius
+	for rid in exclude:
+		probe.add_excluded_object(rid)
+
+	var space := world.direct_space_state if world != null else null
+	var inside := 0
+	var unprotected := 0
+	var snaps := 0
+	var worst_snap := 0.0
+	var pulled := 0
+	var frames: Array[Dictionary] = []
+
+	for t in path:
+		var pivot := t.origin
+		var wanted := pivot + t.basis * offset
+		var got := probe.resolve(pivot, wanted, delta)
+
+		var ray := PhysicsRayQueryParameters3D.create(pivot, wanted, mask, exclude)
+		var blocked := space != null and not space.intersect_ray(ray).is_empty()
+
+		if blocked or DotCameraProbe.is_inside(space, wanted, radius * 0.9, mask, exclude):
+			unprotected += 1
+
+		if DotCameraProbe.is_inside(space, got, radius * 0.9, mask, exclude):
+			inside += 1
+
+		if got.distance_to(wanted) > 0.05:
+			pulled += 1
+
+		worst_snap = maxf(worst_snap, probe.last_snap())
+		if probe.last_snap() > 0.3:
+			snaps += 1
+			if OS.get_environment("CAMERA_DEBUG") != "":
+				print("    snap %.2f m at frame %d: pivot %s wanted %s got %s, hard %.2f" % [probe.last_snap(), frames.size(), pivot, wanted, got, float(probe.describe()["hard_limit"])])
+
+		frames.append({"pivot": pivot, "wanted": wanted, "got": got, "basis": t.basis})
+
+	return {
+		"frames": path.size(), "unprotected": unprotected, "inside": inside,
+		"pulled": pulled, "snaps": snaps, "worst_snap": worst_snap, "poses": frames,
+	}
+
+
+## Whether a flight is a pass: armed (the unprotected camera was in or behind the level on
+## at least [param armed_at_least] frames) and clean (inside on none, no snap).
+static func passed(got: Dictionary, armed_at_least: int = 1) -> bool:
+	return int(got["unprotected"]) >= armed_at_least and int(got["inside"]) == 0 and int(got["snaps"]) == 0
+
+
+static func summary(got: Dictionary) -> String:
+	return "%d frames: unprotected camera in or behind the level on %d (armed), probed camera inside on %d, pulled in on %d, %d snaps (largest cut %.2f m)" % [
+		got["frames"], got["unprotected"], got["inside"], got["pulled"], got["snaps"], got["worst_snap"],
+	]
+
+
+## Adds [param more] to [param total], for a tool that flies several paths.
+static func add(total: Dictionary, more: Dictionary) -> Dictionary:
+	if total.is_empty():
+		return more.duplicate()
+	for key in ["frames", "unprotected", "inside", "pulled", "snaps"]:
+		total[key] = int(total[key]) + int(more[key])
+	total["worst_snap"] = maxf(float(total["worst_snap"]), float(more["worst_snap"]))
+	return total

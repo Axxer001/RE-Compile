@@ -1,0 +1,37 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"assault_rifle"
+label = "Assault rifle"
+category = "ranged"
+damage_kind = "bullet"
+damage_hp = 28.0
+reach_tiles = 0.0
+arc_degrees = 0.0
+windup_s = 0.0
+active_s = 0.03
+recovery_s = 0.07
+endurance_cost = 0.0
+noise_radius_tiles = 15.0
+magazine_size = 30
+ammo_type = "ammo_556"
+range_tiles = 20.0
+pellets = 1
+spread_deg = 0.0
+fire_mode = "auto"
+reload_s = 2.0
+reload_clip = "rifle_reload"
+aim_clip = "rifle_aim"
+attack_clip = "rifle_fire"
+held_mesh_id = "assault_rifle"
+reload_empty_s = 2.7
+draw_s = 0.55
+ads_s = 0.28
+ads_move_scale = 0.55
+headshot_mult = 1.4
+spread_hip_deg = 2.5
+spread_ads_deg = 0.0
+source_note = "28 HP / 30 rounds: ARCHITECTURE legacy table, now automatic (PZ FireMode Auto). Fixed 0.1 s interval (600 rpm) proposed. Range 20 proposed (PZ 30 exceeds campus rooms). Reload 2.0 s, noise 15 proposed (PZ SoundRadius 150). Handling (2026-11-10, ours, in proportion to apex-study counterparts R-301 0.6/0.27/x0.5): draw 0.55s, ADS 0.28s at x0.55 move, head x1.4, hip spread 2.5 deg, empty reload 2.7s."

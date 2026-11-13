@@ -1,0 +1,34 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"pistol"
+label = "9 mm pistol"
+category = "ranged"
+damage_kind = "bullet"
+damage_hp = 35.0
+reach_tiles = 0.0
+arc_degrees = 0.0
+windup_s = 0.05
+active_s = 0.05
+recovery_s = 0.2
+endurance_cost = 0.0
+noise_radius_tiles = 12.0
+magazine_size = 15
+ammo_type = "ammo_9mm"
+range_tiles = 15.0
+reload_s = 1.5
+reload_clip = "handgun_reload"
+aim_clip = "handgun_aim"
+attack_clip = "handgun_fire"
+held_mesh_id = "pistol"
+reload_empty_s = 1.8
+draw_s = 0.25
+ads_s = 0.16
+ads_move_scale = 0.95
+headshot_mult = 1.5
+spread_hip_deg = 3.5
+spread_ads_deg = 0.3
+source_note = "Damage 35 / 15 rounds: ARCHITECTURE legacy table. Range 15: PZ Pistol MaxRange. Semi-auto (edge-triggered input), 0.3 s shot interval and 1.5 s reload (rounds move at 80%) proposed; PZ reload/recoil units unverified. Noise 12 tiles proposed (PZ SoundRadius 100 vs bat ~ ratio). Handling (2026-11-10, ours, in proportion to apex-study counterparts P2020 0.225/0.18/x1.0): draw 0.25s, ADS 0.16s at x0.95 move, head x1.5, hip spread 3.5 deg, empty reload 1.8s."

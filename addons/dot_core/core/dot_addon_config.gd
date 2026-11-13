@@ -1,0 +1,676 @@
+class_name DotAddonConfig
+extends RefCounted
+
+## Where an addon's or pack's tuning lives: every `*.yml` in `cfg/addon/<addon_name>/`, read sorted by
+## name, a later key overriding (maps merge, lists and scalars replace); defaults < yml < environment < command line.
+## `DotAddonConfig.load_dir("dot-map", defaults)`; roots, naming and secret refusal: docs/addon-config.md, [method export_filter_hint].
+
+const CHANNEL := "addon_config"
+const SUBDIR := "addon"
+## The operator override layer: `cfg/server/addon/<addon_underscored>/`, mirroring `cfg/addon/`.
+const SERVER_SUBDIR := "server/addon"
+## The game layer between the addon's and the operator's: `cfg/game/<game>/<addon_underscored>/`.
+const GAME_SUBDIR := "game"
+## The player's own layer, `user://cfg/user/addon/<addon_underscored>/`, between game and operator; see [method set_user_tier].
+const USER_SUBDIR := "user/addon"
+## The operator's per-game layer, strongest: `cfg/server/game/<game>/<addon_underscored>/`.
+const SERVER_GAME_SUBDIR := "server/game"
+## The operator layer before the mirror: `cfg/server/<addon_underscored>/`, shimmed by [DotCfgLegacy].
+const LEGACY_SERVER_SUBDIR := "server"
+## Tier -> the old directory prefixes read through [DotCfgLegacy], weakest first.
+const LEGACY_SUBDIRS := {
+	"addon": ["addons"],
+	"game": ["games"],
+	"user/addon": ["user/addons"],
+	"server/addon": ["server", "server/addons"],
+	"server/game": ["server/games"],
+}
+const EXTENSION := "yml"
+## Whole words that make any path segment secret. `key` is separate: only as the last word.
+const SECRET_WORDS: PackedStringArray = ["password", "passwords", "passwd", "secret", "secrets", "token", "tokens", "apikey"]
+
+## The game whose `cfg/game/<game>/` tier is read; empty skips that tier. A game sets it once at start.
+static var game: String = ""
+
+## Whether the player's user tier is read. Off by default: only a solo or listen-host process turns it on
+## ([method set_user_tier]); a dedicated server or a connected client keeps it off, so a file on a
+## player's disk never changes what a server says.
+static var user_tier_enabled := false
+
+## A `--config`-style root to read as well when the command line names none: a host that was handed its cfg directory another way sets it.
+static var config_root: String = ""
+
+## addon name -> {roots, files, overrides, refused}, kept for [method describe].
+static var _last: Dictionary = {}
+## Env names already warned about as ambiguous, so a reload does not repeat the line.
+static var _warned_ambiguous: Dictionary = {}
+
+
+## The directory a [b]read[/b] finds first: the strongest root that has one (it may be
+## read-only, such as `res://cfg` or the executable's directory). When none exists, the
+## `user://cfg` path. Never write here; use [method write_dir_for].
+static func dir_for(addon_name: String) -> String:
+	var dirs := _candidate_dirs(addon_name)
+	for i in range(dirs.size() - 1, -1, -1):
+		if DirAccess.dir_exists_absolute(dirs[i]):
+			return dirs[i]
+	return write_dir_for(addon_name)
+
+
+## The folder name for an addon: the repository name with `-` as `_` (`dot-map` is `dot_map`).
+static func folder_name(addon_name: String) -> String:
+	return addon_name.replace("-", "_")
+
+
+## Every existing copy of one addon file, weakest first: shipped addon, game, then the
+## operator's server tiers, in every root (an old plural path stands in for a missing
+## singular one). [param extra_dir] is a `--config`-style root put last.
+static func file_layers(addon_name: String, file: String, extra_dir: String = "") -> PackedStringArray:
+	var out := PackedStringArray()
+	for tier in [SUBDIR, GAME_SUBDIR, USER_SUBDIR, SERVER_SUBDIR, SERVER_GAME_SUBDIR]:
+		var dirs := _tier_dirs(addon_name, tier, extra_dir)
+		var olds := _legacy_dirs(addon_name, tier, extra_dir)
+		for i in dirs.size():
+			var path := _resolve_file(file, dirs[i], olds, i)
+			if path != "":
+				out.append(path)
+	return out
+
+
+## The file to read in [param new_dir] or, while the shim lasts, the same file in one of the old
+## directories ([param olds] at root [param i]); the singular copy wins whole.
+static func _resolve_file(file: String, new_dir: String, olds: Array, i: int) -> String:
+	var new_path := new_dir.path_join(file)
+	var found := ""
+	for variant in olds:
+		var r := DotCfgLegacy.find((variant as PackedStringArray)[i].path_join(file), new_path)
+		if r != "" and r != new_path:
+			found = r
+	if FileAccess.file_exists(new_path):
+		return new_path
+	return found
+
+
+## Old-name directories of [param tier], one PackedStringArray per old prefix, each parallel to [method _tier_dirs].
+static func _legacy_dirs(addon_name: String, tier: String, extra_dir: String = "") -> Array:
+	var out: Array = []
+	for sub in LEGACY_SUBDIRS.get(tier, []):
+		out.append(_tier_dirs(addon_name, tier, extra_dir, sub))
+	return out
+
+
+## For a list file an operator may replace (a map rotation): the layers of [method file_layers] that
+## apply, weakest first. A layer whose top level lacks `merge: true` replaces every weaker one, so only
+## the strongest such layer and the `merge: true` layers over it remain.
+static func replace_aware_layers(addon_name: String, file: String, extra_dir: String = "") -> PackedStringArray:
+	var all := file_layers(addon_name, file, extra_dir)
+	var start := 0
+	for i in range(all.size() - 1, -1, -1):
+		var parsed := DotYaml.parse_file(all[i])
+		var wants_merge: bool = parsed.ok and parsed.value is Dictionary and (parsed.value as Dictionary).get("merge") == true
+		if not wants_merge:
+			start = i
+			break
+	return all.slice(start)
+
+
+## Reads one named yml for an addon that applies it to its own typed config: the game's,
+## then the operator's copy (weakest first), each handed to [param apply]
+## (`func(values, path) -> PackedStringArray`). Secrets stay file-only: no env or argv.
+static func apply_file(addon_name: String, file_name: String, legacy_dir: String, apply: Callable) -> DotResult:
+	var layers := file_layers(addon_name, file_name)
+	var newest := (
+		layers[layers.size() - 1] if not layers.is_empty()
+		else write_dir_for(addon_name).path_join(file_name)
+	)
+	var old_path := legacy_dir.path_join(file_name) if legacy_dir != "" else ""
+	if old_path != "" and DotCfgLegacy.find(old_path, newest) == old_path:
+		layers = PackedStringArray([old_path])
+
+	var applied := PackedStringArray()
+	for path in layers:
+		var parsed := DotYaml.parse_file(path)
+		if not parsed.ok:
+			return parsed.wrap("Could not read '%s'." % path)
+		if parsed.value == null:
+			continue
+		if not (parsed.value is Dictionary):
+			return DotResult.fail(DotError.CODE_PARSE, "'%s' must hold a mapping at the top level." % path)
+		applied.append_array(apply.call(parsed.value as Dictionary, path))
+	return DotResult.success(applied)
+
+
+## Where a write belongs: `user://cfg/addon/<addon_underscored>`, the only root a game may
+## write. A `--config DIR` holding the addon overrides it. Call [code]DotWeb.sync_filesystem()[/code] after.
+static func write_dir_for(addon_name: String) -> String:
+	return "user://cfg".path_join(SUBDIR).path_join(folder_name(addon_name))
+
+
+## Turns the player's user tier on for a solo or listen-host process, off for a server or a connected client.
+## dot-profile's set reads this same flag, so one call switches both.
+static func set_user_tier(enabled: bool) -> void:
+	user_tier_enabled = enabled
+
+
+## Directory of the user tier for an addon: `user://cfg/user/addon/<addon_underscored>`.
+static func user_dir_for(addon_name: String, prefix: String = USER_SUBDIR) -> String:
+	return "user://cfg".path_join(prefix).path_join(folder_name(addon_name))
+
+
+## Path of the user-tier copy of [param file].
+static func user_file(addon_name: String, file: String) -> String:
+	return user_dir_for(addon_name).path_join(file)
+
+
+## The user file's own `{dotted path: value}`, read even when the tier is off; empty when absent or unreadable.
+static func user_paths(addon_name: String, file: String) -> Dictionary:
+	var path := user_file(addon_name, file)
+	if not _file_ok(file) or not _addon_ok(addon_name) or not FileAccess.file_exists(path):
+		return {}
+	var res := DotYaml.parse_file(path)
+	var out := {}
+	if res.ok and res.value is Dictionary:
+		_leaf_values(res.value, "", out)
+	return out
+
+
+## Writes [param paths] (`{dotted path: value}`) into the user copy of [param file], keeping
+## its other keys. A [param schema] limits each key to a declared field and type; a secret
+## key or one in [param sensitive] is refused. `CODE_STATE` while the tier is off.
+static func save_user(addon_name: String, file: String, paths: Dictionary, schema: Array = [], sensitive: PackedStringArray = PackedStringArray()) -> DotResult:
+	if not user_tier_enabled:
+		return DotResult.fail(DotError.CODE_STATE, "%s/%s: the user tier is off in this process" % [addon_name, file])
+	if not _file_ok(file) or not _addon_ok(addon_name):
+		return DotResult.fail(DotError.CODE_INVALID, "bad addon or file name '%s/%s'" % [addon_name, file])
+	var tree := {}
+	var path := user_file(addon_name, file)
+	var had := FileAccess.file_exists(path)
+	if had:
+		var existing := DotYaml.parse_file(path)
+		if not existing.ok:
+			return existing.wrap("saving %s" % path)
+		if existing.value is Dictionary:
+			tree = existing.value
+	for key in paths:
+		var parts := String(key).split(".")
+		if String(key).is_empty() or parts.has(""):
+			return DotResult.fail(DotError.CODE_INVALID, "bad key path '%s'" % key)
+		var value: Variant = paths[key]
+		if not is_finite_value(value):
+			return DotResult.fail(DotError.CODE_INVALID, "%s: NaN or infinity is refused" % key)
+		if _is_sensitive(String(key), sensitive) or _holds_secret(String(key), value, sensitive):
+			return DotResult.fail(DotError.CODE_FORBIDDEN, "%s: secrets are file-only" % key)
+		if not schema.is_empty():
+			var f := {}
+			for e in schema:
+				if e["name"] == parts[0]:
+					f = e
+			if f.is_empty():
+				return DotResult.fail(DotError.CODE_INVALID, "unknown key '%s'" % parts[0])
+			if parts.size() > 1 and f["type"] != "dict":
+				return DotResult.fail(DotError.CODE_INVALID, "%s: '%s' is not a mapping, so it has no nested keys" % [key, parts[0]])
+			if parts.size() == 1:
+				var checked := check_field(f, value)
+				if checked.has("error"):
+					return DotResult.fail(DotError.CODE_INVALID, "%s: %s" % [key, checked["error"]])
+				value = checked["value"]
+		set_nested(tree, parts, value)
+	var text: Variant = DotYaml.emit(tree)
+	if text == null:
+		return DotResult.fail(DotError.CODE_INVALID, "%s holds a value yml cannot carry" % path)
+	var dir := DotPaths.ensure_parent_dir(path)
+	if not dir.ok:
+		return dir
+	var wrote := DotPaths.write_text(path, text)
+	if not wrote.ok:
+		return wrote.wrap("saving %s" % path)
+	DotWeb.sync_filesystem()
+	DotLog.info(CHANNEL, "saved to user layer", {"addon": addon_name, "file": file, "keys": paths.size()})
+	return DotResult.success({"saved": path})
+
+
+## Sets the nested key [param parts] in [param root], creating mappings on the way; containers are copied.
+static func set_nested(root: Dictionary, parts: PackedStringArray, value: Variant) -> void:
+	var at := root
+	for i in parts.size() - 1:
+		if not (at.get(parts[i]) is Dictionary):
+			at[parts[i]] = {}
+		at = at[parts[i]]
+	at[parts[parts.size() - 1]] = value.duplicate(true) if value is Array or value is Dictionary else value
+
+
+## False when [param v] is, or holds, NaN or infinity.
+static func is_finite_value(v: Variant) -> bool:
+	if v is float:
+		return is_finite(v)
+	if v is Array:
+		for e in v:
+			if not is_finite_value(e):
+				return false
+	elif v is Dictionary:
+		for k in v:
+			if not is_finite_value(v[k]):
+				return false
+	return true
+
+
+## `{value}` or `{error}` after the type, enum and range checks of one schema field
+## (`{name, type, default, min, max, enum, required}`; type is int, float, string, bool, list, dict or any).
+static func check_field(f: Dictionary, v: Variant) -> Dictionary:
+	var t: String = f["type"]
+	var out: Variant = v
+	if v == null and not f.get("required", false) and f.get("default") == null:
+		return {"value": null}
+	match t:
+		"int":
+			if v is int:
+				out = v
+			elif v is float and is_finite(v) and v == floorf(v):
+				out = int(v)
+			else:
+				return {"error": "expected int, got %s" % str(v)}
+		"float":
+			if (v is int or v is float) and is_finite_value(v):
+				out = float(v)
+			else:
+				return {"error": "expected float, got %s" % str(v)}
+		"string":
+			if v is String or v is StringName:
+				out = String(v)
+			else:
+				return {"error": "expected string, got %s" % str(v)}
+		"bool":
+			if not (v is bool):
+				return {"error": "expected bool, got %s" % str(v)}
+		"list":
+			if not (v is Array):
+				return {"error": "expected list, got %s" % str(v)}
+		"dict":
+			if not (v is Dictionary):
+				return {"error": "expected mapping, got %s" % str(v)}
+		"any":
+			pass
+		_:
+			return {"error": "schema type '%s' is unknown" % t}
+	if t == "int" or t == "float":
+		if f.has("min") and out < f["min"]:
+			return {"error": "%s is below min %s" % [str(out), str(f["min"])]}
+		if f.has("max") and out > f["max"]:
+			return {"error": "%s is above max %s" % [str(out), str(f["max"])]}
+	if f.has("enum") and not (f["enum"] as Array).has(out):
+		return {"error": "%s is not one of %s" % [str(out), str(f["enum"])]}
+	return {"value": out}
+
+
+## Removes the user copy of [param file]: back to the tiers below. Value: true when a file was removed.
+static func reset_user(addon_name: String, file: String) -> DotResult:
+	if not _file_ok(file) or not _addon_ok(addon_name):
+		return DotResult.fail(DotError.CODE_INVALID, "bad addon or file name '%s/%s'" % [addon_name, file])
+	var path := user_file(addon_name, file)
+	if not FileAccess.file_exists(path):
+		return DotResult.success(false)
+	if DirAccess.remove_absolute(path) != OK:
+		return DotResult.fail(DotError.CODE_IO, "cannot remove %s" % path)
+	DotWeb.sync_filesystem()
+	DotLog.info(CHANNEL, "user layer reset", {"addon": addon_name, "file": file})
+	return DotResult.success(true)
+
+
+static func _file_ok(file: String) -> bool:
+	return file != "" and not file.contains("/") and not file.contains("\\") and not file.contains("..") and file.get_extension() == EXTENSION
+
+
+static func _addon_ok(addon_name: String) -> bool:
+	return addon_name.strip_edges() != "" and not addon_name.contains("/") and not addon_name.contains("\\") and not addon_name.contains("..") and not addon_name.contains(":")
+
+
+## Whether any key inside a dictionary [param value] (under [param prefix]) is a secret.
+static func _holds_secret(prefix: String, value: Variant, extra: PackedStringArray) -> bool:
+	if not (value is Dictionary):
+		return false
+	for k in value:
+		var p := "%s.%s" % [prefix, k]
+		if _is_sensitive(p, extra) or _holds_secret(p, value[k], extra):
+			return true
+	return false
+
+
+static func _leaf_values(tree: Dictionary, prefix: String, out: Dictionary) -> void:
+	for k in tree:
+		if tree[k] is Dictionary and (tree[k] as Dictionary).size() > 0:
+			_leaf_values(tree[k], prefix + str(k) + ".", out)
+		else:
+			out[prefix + str(k)] = tree[k]
+
+
+## What an export preset needs so the yml files ship. Godot's exporter only packs resources
+## it knows plus what `include_filter` names, so a game that keeps `res://cfg/addon/` ships
+## none of it without this; it fails silently, as "no files".
+static func export_filter_hint() -> String:
+	return "Add `cfg/*` (or `*.yml`) to include_filter in every export preset (Project > Export > Resources > Filters to export non-resource files), or res://cfg/addon/ is left out of the PCK."
+
+
+## Reads every yml for [param addon_name] over [param defaults] (never mutated) and returns
+## the merged copy; a missing directory returns the defaults. Pass only the addon's own
+## defaults. A bad file fails with [constant DotError.CODE_PARSE] or CODE_IO naming it.
+static func load_dir(
+	addon_name: String,
+	defaults: Dictionary = {},
+	sensitive: PackedStringArray = PackedStringArray()
+) -> DotResult:
+	if (
+		addon_name.strip_edges().is_empty() or addon_name.contains("/") or addon_name.contains("\\")
+		or addon_name.contains(":") or addon_name.contains("..")
+	):
+		return DotResult.fail(DotError.CODE_INVALID, "Bad addon name for config: '%s'" % addon_name)
+
+	var merged: Dictionary = defaults.duplicate(true)
+	var files := PackedStringArray()
+	var roots := PackedStringArray()
+
+	# [dir, new_dir]: a legacy dir's file is skipped when the new dir holds it or DotCfgLegacy says no.
+	var all_dirs: Array = []
+	for tier in [SUBDIR, GAME_SUBDIR, USER_SUBDIR, SERVER_SUBDIR, SERVER_GAME_SUBDIR]:
+		var news := _tier_dirs(addon_name, tier)
+		for variant in _legacy_dirs(addon_name, tier):
+			for k in news.size():
+				all_dirs.append([(variant as PackedStringArray)[k], news[k]])
+		for d in news:
+			all_dirs.append([d, ""])
+	for pair in all_dirs:
+		var dir: String = pair[0]
+		var new_dir: String = pair[1]
+		if not DirAccess.dir_exists_absolute(dir):
+			continue
+		roots.append(dir)
+		var names := PackedStringArray()
+		for f in DirAccess.get_files_at(dir):
+			if f.get_extension().to_lower() != EXTENSION:
+				continue
+			if new_dir != "" and DotCfgLegacy.find(dir.path_join(f), new_dir.path_join(f)) != dir.path_join(f):
+				continue
+			names.append(f)
+		names.sort()
+		for f in names:
+			var path := dir.path_join(f)
+			var res := DotYaml.parse_file(path)
+			if not res.ok:
+				DotLog.error(CHANNEL, "bad config file", {"addon": addon_name, "file": path})
+				return res.wrap("%s: config file %s" % [addon_name, f])
+			if not (res.value is Dictionary):
+				if res.value == null:
+					continue  # An empty file sets nothing.
+				var bad := DotResult.fail(
+					DotError.CODE_PARSE, "%s must hold a mapping at the top level." % path
+				)
+				DotLog.error(CHANNEL, "bad config file", {"addon": addon_name, "file": path})
+				return bad
+			merge(merged, res.value as Dictionary)
+			files.append(path)
+
+	var overrides := PackedStringArray()
+	var refused := PackedStringArray()
+	_apply_layer(addon_name, merged, sensitive, overrides, refused)
+
+	_last[addon_name] = {"roots": roots, "files": files, "overrides": overrides, "refused": refused}
+	DotLog.debug(CHANNEL, "loaded", {"addon": addon_name, "files": files.size(), "overrides": overrides.size()})
+	return DotResult.success(merged)
+
+
+## Reads a dotted path out of a loaded config; [param default] when absent.
+static func get_value(cfg: Dictionary, path: String, default: Variant = null) -> Variant:
+	return DotYaml.at(cfg, path, default)
+
+
+## What [method load_dir] last did for [param addon_name] (or for each addon when empty).
+static func describe(addon_name: String = "") -> String:
+	return "\n".join(describe_lines(addon_name))
+
+
+static func describe_lines(addon_name: String = "") -> PackedStringArray:
+	var lines := PackedStringArray()
+	var names: Array = [addon_name] if addon_name != "" else _last.keys()
+	names.sort()
+	for n in names:
+		if not _last.has(n):
+			lines.append("%s: not loaded (dir would be %s)" % [n, dir_for(n)])
+			continue
+		var s: Dictionary = _last[n]
+		lines.append("%s: %d file(s), %d env/cli override(s)" % [n, (s["files"] as PackedStringArray).size(), (s["overrides"] as PackedStringArray).size()])
+		for f in s["files"]:
+			lines.append("  file %s" % f)
+		for o in s["overrides"]:
+			lines.append("  override %s" % o)
+		for r in s["refused"]:
+			lines.append("  refused (sensitive) %s" % r)
+	return lines
+
+
+
+static func _config_dir_arg() -> String:
+	var args := OS.get_cmdline_user_args() + OS.get_cmdline_args()
+	for i in args.size():
+		if args[i] == "--config" and i + 1 < args.size():
+			return args[i + 1]
+		if args[i].begins_with("--config="):
+			return args[i].substr(9)
+	return config_root
+
+
+## Addon directories (`cfg/addon/<addon_underscored>`), weakest root first.
+static func _candidate_dirs(addon_name: String) -> PackedStringArray:
+	return _tier_dirs(addon_name, SUBDIR)
+
+
+## One tier's directories for an addon, weakest root first: [param tier] is one of the `*_SUBDIR` constants; [param for_game] reads another game's `game` tiers than [member game] (empty means [member game]).
+static func tier_dirs(addon_name: String, tier: String, extra_dir: String = "", for_game: String = "") -> PackedStringArray:
+	var saved := game
+	if for_game != "":
+		game = for_game
+	var out := _tier_dirs(addon_name, tier, extra_dir)
+	game = saved
+	return out
+
+
+## The command-line and environment overrides for every leaf of [param merged] (a flat or nested dictionary of one addon's settings), applied in place. Returns `"path <- source"` lines for what was overridden.
+static func apply_overrides(addon_name: String, merged: Dictionary) -> PackedStringArray:
+	var overrides := PackedStringArray()
+	_apply_layer(addon_name, merged, PackedStringArray(), overrides, PackedStringArray())
+	return overrides
+
+
+static func _tier_dirs(addon_name: String, tier: String, extra_dir: String = "", prefix: String = "") -> PackedStringArray:
+	var out := PackedStringArray()
+	var base := prefix if prefix != "" else tier
+	if tier == USER_SUBDIR:
+		if user_tier_enabled:
+			out.append(user_dir_for(addon_name, base))
+		return out
+	var sub_root := ""
+	if tier == GAME_SUBDIR or tier == SERVER_GAME_SUBDIR:
+		if game == "":
+			return out
+		sub_root = base.path_join(game)
+	var sub := (sub_root if sub_root != "" else base).path_join(folder_name(addon_name))
+	out.append("res://cfg".path_join(sub))
+	var exe := OS.get_executable_path().get_base_dir()
+	if exe != "":
+		out.append(exe.path_join("cfg").path_join(sub))
+	out.append("user://cfg".path_join(sub))
+	var given := _config_dir_arg()
+	if given != "":
+		out.append(given.path_join(sub))
+	if extra_dir != "" and extra_dir != given:
+		out.append(extra_dir.path_join(sub))
+	return out
+
+
+## Deep merge of [param over] into [param into]: maps by key, a list or scalar replaced whole (copied).
+static func merge(into: Dictionary, over: Dictionary) -> void:
+	for k in over:
+		if into.get(k) is Dictionary and over[k] is Dictionary:
+			merge(into[k] as Dictionary, over[k] as Dictionary)
+		else:
+			into[k] = over[k].duplicate(true) if (over[k] is Dictionary or over[k] is Array) else over[k]
+
+
+## Old private name, kept until callers move to [method merge].
+static func _merge(into: Dictionary, over: Dictionary) -> void:
+	merge(into, over)
+
+
+static func _leaf_paths(tree: Dictionary, prefix: String, out: PackedStringArray) -> void:
+	for k in tree:
+		# A key that is not text, or holds a '.', has no dotted path that reads back.
+		if not (k is String or k is StringName) or String(k).contains("."):
+			continue
+		var p := "%s%s" % [prefix, k]
+		if tree[k] is Dictionary:
+			_leaf_paths(tree[k] as Dictionary, p + ".", out)
+		else:
+			out.append(p)
+
+
+static func _is_sensitive(path: String, extra: PackedStringArray) -> bool:
+	var segs := path.split(".")
+	var prefix := ""
+	for seg in segs:
+		prefix = seg if prefix == "" else prefix + "." + seg
+		if extra.has(prefix) or extra.has(seg):
+			return true
+		var words := _words(seg)
+		for w in words:
+			if w in SECRET_WORDS:
+				return true
+		if words.size() > 0 and words[words.size() - 1] == "key":
+			return true
+	return false
+
+
+## Lower-case words of a key: split on `_`, `-` and a lower-to-upper camelCase step.
+static func _words(seg: String) -> PackedStringArray:
+	var spaced := ""
+	for i in seg.length():
+		var c := seg[i]
+		if i > 0 and c != c.to_lower() and seg[i - 1] == seg[i - 1].to_lower() and seg[i - 1] != "_" and seg[i - 1] != "-":
+			spaced += "_"
+		spaced += c
+	var out := PackedStringArray()
+	for w in spaced.to_lower().replace("-", "_").split("_"):
+		if w != "":
+			out.append(w)
+	return out
+
+
+static func _env_name(addon_name: String, path: String) -> String:
+	var s := "%s_%s" % [addon_name, path]
+	return s.to_upper().replace("-", "_").replace(".", "_").replace("/", "_")
+
+
+static func _apply_layer(
+	addon_name: String, merged: Dictionary, sensitive: PackedStringArray,
+	overrides: PackedStringArray, refused: PackedStringArray
+) -> void:
+	var leaves := PackedStringArray()
+	_leaf_paths(merged, "", leaves)
+	var argv := OS.get_cmdline_user_args() + OS.get_cmdline_args()
+	var cli_prefix := "--%s." % addon_name
+
+	# Two leaves can spell the same variable (a_b.c, a.b_c); which one was meant is unknowable.
+	var env_owner := {}
+	var ambiguous := {}
+	for path in leaves:
+		var en := _env_name(addon_name, path)
+		if env_owner.has(en):
+			ambiguous[en] = true
+		else:
+			env_owner[en] = path
+	for en in ambiguous:
+		if OS.has_environment(en) and not _warned_ambiguous.has(en):
+			_warned_ambiguous[en] = true
+			DotLog.warn(CHANNEL, "environment variable names two keys; applied to neither", {"addon": addon_name, "env": en})
+
+	for path in leaves:
+		var raw: Variant = null
+		var from := ""
+		var env_key := _env_name(addon_name, path)
+		if OS.has_environment(env_key) and not ambiguous.has(env_key):
+			raw = OS.get_environment(env_key)
+			from = "env " + env_key
+		# Command line is stronger, so it is read second and wins.
+		for i in argv.size():
+			var a: String = argv[i]
+			if not a.begins_with(cli_prefix + path):
+				continue
+			var rest := a.substr(cli_prefix.length() + path.length())
+			if rest.begins_with("="):
+				raw = rest.substr(1)
+				from = "cli " + a.get_slice("=", 0)
+			elif rest == "" and i + 1 < argv.size() and not String(argv[i + 1]).begins_with("--"):
+				raw = argv[i + 1]
+				from = "cli " + a
+		if raw == null:
+			continue
+		if _is_sensitive(path, sensitive):
+			refused.append("%s (%s)" % [path, from])
+			DotLog.warn(CHANNEL, "secret refused from environment/argv", {"addon": addon_name, "key": path})
+			continue
+		var node := merged
+		var parts := path.split(".")
+		for j in parts.size() - 1:
+			node = node[parts[j]]
+		var key := parts[parts.size() - 1]
+		var coerced: Variant = _coerce(str(raw), node[key])
+		if coerced == null:
+			DotLog.warn(CHANNEL, "override has the wrong type", {"addon": addon_name, "key": path, "from": from})
+			continue
+		node[key] = coerced
+		overrides.append("%s <- %s" % [path, from])
+
+
+## Parses [param text] as the type of [param current]; null when it will not.
+static func _coerce(text: String, current: Variant) -> Variant:
+	match typeof(current):
+		TYPE_BOOL:
+			var low := text.to_lower()
+			if low in ["true", "1", "yes", "on"]:
+				return true
+			if low in ["false", "0", "no", "off"]:
+				return false
+			return null
+		TYPE_NIL:
+			# No type to keep: read it the way a yml file would.
+			var parsed := DotYaml.parse("v: " + text)
+			if parsed.ok and parsed.value is Dictionary and (parsed.value as Dictionary).has("v"):
+				return (parsed.value as Dictionary)["v"]
+			return text
+		TYPE_INT:
+			var t := text.strip_edges()
+			if t.is_valid_int():
+				return t.to_int()
+			if t.is_valid_float():
+				var f := t.to_float()
+				if is_finite(f) and f == floorf(f) and absf(f) < 9007199254740992.0:
+					return int(f)
+			return null
+		TYPE_FLOAT:
+			return float(text) if text.is_valid_float() else null
+		TYPE_STRING, TYPE_STRING_NAME:
+			return text
+		TYPE_ARRAY:
+			# Elements keep the type of the default's first element; text when it is empty.
+			var proto: Variant = ""
+			if (current as Array).size() > 0:
+				proto = (current as Array)[0]
+			if proto is Dictionary or proto is Array:
+				return null
+			var items: Array = []
+			if text.strip_edges() == "":
+				return items
+			for part in text.split(","):
+				var item: Variant = _coerce(part.strip_edges(), proto)
+				if item == null and proto != null:
+					return null
+				items.append(item)
+			return items
+	return null

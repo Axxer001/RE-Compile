@@ -1,0 +1,27 @@
+# Godot caches and per-machine files
+.godot/
+.import/
+*.tmp
+*.translation
+export_credentials.cfg
+.mono/
+# Local tooling output (regenerable, large)
+evidence/
+graphify-out/
+export_templates/
+# Builds
+build/
+builds/
+*.exe
+*.pck
+*.zip
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.vs/

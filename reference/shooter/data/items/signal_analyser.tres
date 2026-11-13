@@ -1,0 +1,14 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/item_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"signal_analyser"
+label = "Signal analyser"
+category = "loot"
+icon_id = "signal_analyser"
+max_stack = 1
+value = 90
+weight_kg = 4.0
+model_path = "res://assets/kenney/furniture/radio.glb"

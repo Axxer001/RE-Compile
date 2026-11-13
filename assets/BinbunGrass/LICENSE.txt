@@ -1,0 +1,6 @@
+BinbunGrass by Binbun (binbun3d.itch.io).
+License: Creative Commons Zero (CC0 1.0), as stated by the author:
+- Grass: https://binbun3d.itch.io/godot-grass and https://forum.godotengine.org/t/free-stylized-3d-grass-shader-cc0/134880
+- Sky: https://binbun3d.itch.io/godot-skies and https://godotshaders.com/shader/customizable-sky-shader/
+The downloaded zip carried no licence file; this note records the source pages (2026-11-13).
+https://creativecommons.org/publicdomain/zero/1.0/

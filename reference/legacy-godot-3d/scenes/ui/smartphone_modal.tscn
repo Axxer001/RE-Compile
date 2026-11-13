@@ -1,0 +1,182 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/smartphone_modal.gd" id="1_script"]
+[ext_resource type="FontFile" path="res://assets/fonts/JetBrainsMono-Regular.ttf" id="2_font"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_PhoneBody"]
+bg_color = Color(0.12, 0.14, 0.18, 1)
+border_width_left = 6
+border_width_top = 10
+border_width_right = 6
+border_width_bottom = 12
+border_color = Color(0.05, 0.06, 0.08, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_PhoneScreen"]
+bg_color = Color(0.04, 0.05, 0.07, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="SmartphoneModal" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="PhoneBody" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -110.0
+offset_top = -170.0
+offset_right = 110.0
+offset_bottom = 170.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBox_PhoneBody")
+
+[node name="Screen" type="Panel" parent="PhoneBody"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = 6.0
+offset_right = -6.0
+offset_bottom = -6.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBox_PhoneScreen")
+
+[node name="Content" type="VBoxContainer" parent="PhoneBody/Screen"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 6
+
+[node name="Header" type="VBoxContainer" parent="PhoneBody/Screen/Content"]
+layout_mode = 2
+
+[node name="AppTitle" type="Label" parent="PhoneBody/Screen/Content/Header"]
+layout_mode = 2
+text = "WMSU STUDENT STATS"
+horizontal_alignment = 1
+
+[node name="PointsLabel" type="Label" parent="PhoneBody/Screen/Content/Header"]
+layout_mode = 2
+text = "UPGRADE POINTS: 0"
+horizontal_alignment = 1
+
+[node name="FilesLabel" type="Label" parent="PhoneBody/Screen/Content/Header"]
+layout_mode = 2
+text = "FILES RECOVERED: 0"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="PhoneBody/Screen/Content"]
+layout_mode = 2
+
+[node name="StatsList" type="VBoxContainer" parent="PhoneBody/Screen/Content"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="HPRow" type="HBoxContainer" parent="PhoneBody/Screen/Content/StatsList"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="PhoneBody/Screen/Content/StatsList/HPRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Max HP:"
+
+[node name="Value" type="Label" parent="PhoneBody/Screen/Content/StatsList/HPRow"]
+layout_mode = 2
+text = "100"
+
+[node name="UpgradeBtn" type="Button" parent="PhoneBody/Screen/Content/StatsList/HPRow"]
+layout_mode = 2
+text = "+"
+
+[node name="DefRow" type="HBoxContainer" parent="PhoneBody/Screen/Content/StatsList"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="PhoneBody/Screen/Content/StatsList/DefRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Defense:"
+
+[node name="Value" type="Label" parent="PhoneBody/Screen/Content/StatsList/DefRow"]
+layout_mode = 2
+text = "+0"
+
+[node name="UpgradeBtn" type="Button" parent="PhoneBody/Screen/Content/StatsList/DefRow"]
+layout_mode = 2
+text = "+"
+
+[node name="AtkRow" type="HBoxContainer" parent="PhoneBody/Screen/Content/StatsList"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="PhoneBody/Screen/Content/StatsList/AtkRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Attack:"
+
+[node name="Value" type="Label" parent="PhoneBody/Screen/Content/StatsList/AtkRow"]
+layout_mode = 2
+text = "+0%"
+
+[node name="UpgradeBtn" type="Button" parent="PhoneBody/Screen/Content/StatsList/AtkRow"]
+layout_mode = 2
+text = "+"
+
+[node name="AtkSpdRow" type="HBoxContainer" parent="PhoneBody/Screen/Content/StatsList"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="PhoneBody/Screen/Content/StatsList/AtkSpdRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Atk Spd:"
+
+[node name="Value" type="Label" parent="PhoneBody/Screen/Content/StatsList/AtkSpdRow"]
+layout_mode = 2
+text = "+0%"
+
+[node name="UpgradeBtn" type="Button" parent="PhoneBody/Screen/Content/StatsList/AtkSpdRow"]
+layout_mode = 2
+text = "+"
+
+[node name="MovSpdRow" type="HBoxContainer" parent="PhoneBody/Screen/Content/StatsList"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="PhoneBody/Screen/Content/StatsList/MovSpdRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Mov Spd:"
+
+[node name="Value" type="Label" parent="PhoneBody/Screen/Content/StatsList/MovSpdRow"]
+layout_mode = 2
+text = "+0%"
+
+[node name="UpgradeBtn" type="Button" parent="PhoneBody/Screen/Content/StatsList/MovSpdRow"]
+layout_mode = 2
+text = "+"
+
+[node name="CloseBtn" type="Button" parent="PhoneBody/Screen/Content"]
+layout_mode = 2
+text = "Lock Phone"

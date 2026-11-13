@@ -1,0 +1,206 @@
+[gd_scene load_steps=22 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/player/player.tscn" id="1_player"]
+[ext_resource type="Script" path="res://scripts/topdown_camera.gd" id="2_camera"]
+[ext_resource type="PackedScene" path="res://scenes/enemies/infected_shambler.tscn" id="3_enemy"]
+[ext_resource type="PackedScene" path="res://scenes/props/terminal.tscn" id="4_terminal"]
+[ext_resource type="PackedScene" path="res://scenes/props/door_interactive.tscn" id="5_door"]
+[ext_resource type="PackedScene" path="res://scenes/props/extraction_zone.tscn" id="6_extract"]
+[ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="7_hud"]
+[ext_resource type="PackedScene" path="res://scenes/ui/terminal_puzzle_modal.tscn" id="8_modal"]
+[ext_resource type="Script" path="res://scripts/master_playground.gd" id="9_master"]
+[ext_resource type="PackedScene" path="res://scenes/weapons/weapon_pickup.tscn" id="10_pickup"]
+[ext_resource type="Resource" path="res://resources/weapons/melee_baseball_bat.tres" id="11_bat"]
+[ext_resource type="Resource" path="res://resources/weapons/ranged_shotgun.tres" id="12_shotgun"]
+[ext_resource type="Resource" path="res://resources/weapons/ranged_pistol.tres" id="13_pistol"]
+
+[sub_resource type="Environment" id="Environment_Horror"]
+background_mode = 1
+background_color = Color(0.02, 0.02, 0.05, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.04, 0.05, 0.09, 1)
+ambient_light_energy = 0.03
+tonemap_mode = 2
+glow_enabled = true
+glow_intensity = 0.3
+glow_bloom = 0.1
+fog_enabled = true
+fog_light_color = Color(0.04, 0.04, 0.08, 1)
+fog_density = 0.035
+
+[sub_resource type="StandardMaterial3D" id="Mat_FloorHall"]
+albedo_color = Color(0.14, 0.16, 0.2, 1)
+roughness = 0.85
+
+[sub_resource type="BoxMesh" id="BoxMesh_FloorHall"]
+material = SubResource("Mat_FloorHall")
+size = Vector3(8, 0.4, 28)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_FloorHall"]
+size = Vector3(8, 0.4, 28)
+
+[sub_resource type="StandardMaterial3D" id="Mat_FloorLab"]
+albedo_color = Color(0.18, 0.22, 0.28, 1)
+roughness = 0.8
+
+[sub_resource type="BoxMesh" id="BoxMesh_FloorLab"]
+material = SubResource("Mat_FloorLab")
+size = Vector3(16, 0.4, 14)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_FloorLab"]
+size = Vector3(16, 0.4, 14)
+
+[sub_resource type="StandardMaterial3D" id="Mat_Wall"]
+albedo_color = Color(0.28, 0.32, 0.38, 1)
+roughness = 0.75
+
+[sub_resource type="BoxMesh" id="BoxMesh_WallH"]
+material = SubResource("Mat_Wall")
+size = Vector3(16, 3.2, 0.4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_WallH"]
+size = Vector3(16, 3.2, 0.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_WallV"]
+material = SubResource("Mat_Wall")
+size = Vector3(0.4, 3.2, 14)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_WallV"]
+size = Vector3(0.4, 3.2, 14)
+
+[node name="MasterPlayground" type="Node3D"]
+script = ExtResource("9_master")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_Horror")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 15, 0)
+light_color = Color(0.2, 0.25, 0.4, 1)
+light_energy = 0.12
+shadow_enabled = true
+
+[node name="Room1_Corridor" type="Node3D" parent="."]
+
+[node name="Floor" type="StaticBody3D" parent="Room1_Corridor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.2, 2)
+collision_layer = 1
+collision_mask = 7
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room1_Corridor/Floor"]
+mesh = SubResource("BoxMesh_FloorHall")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room1_Corridor/Floor"]
+shape = SubResource("BoxShape3D_FloorHall")
+
+[node name="Room2_SecurityLab" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -10)
+
+[node name="Floor" type="StaticBody3D" parent="Room2_SecurityLab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.2, 0)
+collision_layer = 1
+collision_mask = 7
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room2_SecurityLab/Floor"]
+mesh = SubResource("BoxMesh_FloorLab")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room2_SecurityLab/Floor"]
+shape = SubResource("BoxShape3D_FloorLab")
+
+[node name="WallNorth" type="StaticBody3D" parent="Room2_SecurityLab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, -7)
+collision_layer = 1
+collision_mask = 7
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room2_SecurityLab/WallNorth"]
+mesh = SubResource("BoxMesh_WallH")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room2_SecurityLab/WallNorth"]
+shape = SubResource("BoxShape3D_WallH")
+
+[node name="WallWest" type="StaticBody3D" parent="Room2_SecurityLab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 1.6, 0)
+collision_layer = 1
+collision_mask = 7
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room2_SecurityLab/WallWest"]
+mesh = SubResource("BoxMesh_WallV")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room2_SecurityLab/WallWest"]
+shape = SubResource("BoxShape3D_WallV")
+
+[node name="WallEast" type="StaticBody3D" parent="Room2_SecurityLab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1.6, 0)
+collision_layer = 1
+collision_mask = 7
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room2_SecurityLab/WallEast"]
+mesh = SubResource("BoxMesh_WallV")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room2_SecurityLab/WallEast"]
+shape = SubResource("BoxShape3D_WallV")
+
+[node name="LabDoor" parent="Room2_SecurityLab" instance=ExtResource("5_door")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7)
+
+[node name="Terminal_Encrypted" parent="Room2_SecurityLab" instance=ExtResource("4_terminal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -4.5)
+requires_password = true
+
+[node name="Room3_FacultyWing" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 4)
+
+[node name="Floor" type="StaticBody3D" parent="Room3_FacultyWing"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.2, 0)
+collision_layer = 1
+collision_mask = 7
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room3_FacultyWing/Floor"]
+mesh = SubResource("BoxMesh_FloorLab")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room3_FacultyWing/Floor"]
+shape = SubResource("BoxShape3D_FloorLab")
+
+[node name="Terminal_Guest" parent="Room3_FacultyWing" instance=ExtResource("4_terminal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0.1, 0)
+
+[node name="Room4_Courtyard" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 16)
+
+[node name="ExtractionZone" parent="Room4_Courtyard" instance=ExtResource("6_extract")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 2)
+
+[node name="Pickup_Bat" parent="." instance=ExtResource("10_pickup")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0.2, 1)
+weapon_data = ExtResource("11_bat")
+
+[node name="Pickup_Shotgun" parent="." instance=ExtResource("10_pickup")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.2, 4)
+weapon_data = ExtResource("12_shotgun")
+
+[node name="Pickup_Pistol" parent="." instance=ExtResource("10_pickup")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.2, -8)
+weapon_data = ExtResource("13_pistol")
+
+[node name="Player" parent="." groups=["player"] instance=ExtResource("1_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 8)
+
+[node name="InfectedShambler1" parent="." instance=ExtResource("3_enemy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0.1, -8)
+
+[node name="InfectedShambler2" parent="." instance=ExtResource("3_enemy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.1, -8)
+
+[node name="InfectedShambler3" parent="." instance=ExtResource("3_enemy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.1, 6)
+
+[node name="HUD" parent="." instance=ExtResource("7_hud")]
+
+[node name="TerminalPuzzleModal" parent="." instance=ExtResource("8_modal")]
+
+[node name="TopDownCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.573576, 0.819152, 0, -0.819152, 0.573576, 0, 11, 14.5)
+current = true
+fov = 48.0
+script = ExtResource("2_camera")
+target_node = NodePath("../Player")

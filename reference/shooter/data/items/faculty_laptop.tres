@@ -1,0 +1,14 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/item_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"faculty_laptop"
+label = "Faculty laptop"
+category = "loot"
+icon_id = "faculty_laptop"
+max_stack = 1
+value = 150
+weight_kg = 2.5
+model_path = "res://assets/kenney/furniture/laptop.glb"

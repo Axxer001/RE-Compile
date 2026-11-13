@@ -1,0 +1,222 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/terminal_puzzle_modal.gd" id="1_script"]
+[ext_resource type="FontFile" path="res://assets/fonts/JetBrainsMono-Regular.ttf" id="2_font"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_WinDesktop"]
+bg_color = Color(0.0, 0.47, 0.83, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_AppWindow"]
+bg_color = Color(0.08, 0.1, 0.14, 0.96)
+border_width_left = 2
+border_width_top = 26
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.18, 0.22, 0.3, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+
+[sub_resource type="LabelSettings" id="LabelSettings_Title"]
+font = ExtResource("2_font")
+font_size = 14
+font_color = Color(0.85, 0.9, 1, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_Code"]
+font = ExtResource("2_font")
+font_size = 13
+font_color = Color(0.8, 0.95, 0.8, 1)
+
+[node name="TerminalPuzzleModal" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="ColorRect" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.6)
+
+[node name="Panel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -160.0
+offset_right = 260.0
+offset_bottom = 160.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBox_AppWindow")
+
+[node name="WinTitle" type="Label" parent="Panel"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 10.0
+offset_top = -24.0
+offset_bottom = -2.0
+grow_horizontal = 2
+text = "Windows 11 Workstation — CCS Security Lab"
+label_settings = SubResource("LabelSettings_Title")
+
+[node name="CloseBtn" type="Button" parent="Panel"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -26.0
+offset_top = -25.0
+offset_right = -4.0
+offset_bottom = -1.0
+grow_horizontal = 0
+text = "X"
+
+[node name="Screens" type="Control" parent="Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LoginScreen" type="Control" parent="Panel/Screens"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="UserBox" type="VBoxContainer" parent="Panel/Screens/LoginScreen"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -140.0
+offset_top = -60.0
+offset_right = 140.0
+offset_bottom = 60.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="Username" type="Label" parent="Panel/Screens/LoginScreen/UserBox"]
+layout_mode = 2
+text = "CCS Research Terminal"
+horizontal_alignment = 1
+
+[node name="PasswordInput" type="LineEdit" parent="Panel/Screens/LoginScreen/UserBox"]
+layout_mode = 2
+placeholder_text = "Enter Lab Password..."
+secret = true
+
+[node name="LoginBtn" type="Button" parent="Panel/Screens/LoginScreen/UserBox"]
+layout_mode = 2
+text = "Sign In"
+
+[node name="Feedback" type="Label" parent="Panel/Screens/LoginScreen/UserBox"]
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="HacktoolScreen" type="Control" parent="Panel/Screens"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Header" type="HBoxContainer" parent="Panel/Screens/HacktoolScreen"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 24.0
+grow_horizontal = 2
+
+[node name="QuestionIndicator" type="Label" parent="Panel/Screens/HacktoolScreen/Header"]
+layout_mode = 2
+text = "DECRYPTING NODE 1 OF 3"
+label_settings = SubResource("LabelSettings_Title")
+
+[node name="VBox" type="VBoxContainer" parent="Panel/Screens/HacktoolScreen"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 28.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 6
+
+[node name="PromptEdit" type="TextEdit" parent="Panel/Screens/HacktoolScreen/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+editable = false
+
+[node name="HBox" type="HBoxContainer" parent="Panel/Screens/HacktoolScreen/VBox"]
+layout_mode = 2
+
+[node name="AnswerInput" type="LineEdit" parent="Panel/Screens/HacktoolScreen/VBox/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Type missing syntax here..."
+
+[node name="SubmitBtn" type="Button" parent="Panel/Screens/HacktoolScreen/VBox/HBox"]
+layout_mode = 2
+text = "Execute Syntax"
+
+[node name="Feedback" type="Label" parent="Panel/Screens/HacktoolScreen/VBox"]
+layout_mode = 2
+text = "Fill in the blank syntax"
+
+[node name="CompletedScreen" type="Control" parent="Panel/Screens"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="Panel/Screens/CompletedScreen"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -160.0
+offset_top = -50.0
+offset_right = 160.0
+offset_bottom = 50.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="SuccessTitle" type="Label" parent="Panel/Screens/CompletedScreen/VBox"]
+layout_mode = 2
+text = "RESEARCH FILE RECOVERED!"
+horizontal_alignment = 1
+
+[node name="SuccessDesc" type="Label" parent="Panel/Screens/CompletedScreen/VBox"]
+layout_mode = 2
+text = "+1 Upgrade Point awarded to Smartphone (P)."
+horizontal_alignment = 1

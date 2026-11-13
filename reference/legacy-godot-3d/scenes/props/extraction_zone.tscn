@@ -1,0 +1,36 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/extraction_zone.gd" id="1_extract"]
+[ext_resource type="PackedScene" path="res://assets/props/van.glb" id="2_van"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_Trigger"]
+size = Vector3(5.0, 3.0, 5.0)
+
+[sub_resource type="StandardMaterial3D" id="Mat_FloorGate"]
+albedo_color = Color(0.8, 0.7, 0.1, 1)
+
+[node name="ExtractionZone" type="Area3D"]
+collision_layer = 32
+collision_mask = 2
+script = ExtResource("1_extract")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_Trigger")
+
+[node name="VanModel" parent="." instance=ExtResource("2_van")]
+transform = Transform3D(1.4, 0, 0, 0, 1.4, 0, 0, 0, 1.4, 0, 0, 0)
+
+[node name="BeaconLight" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.6, 0)
+light_color = Color(1, 0.2, 0.2, 1)
+light_energy = 2.5
+omni_range = 6.0
+
+[node name="PromptLabel" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.2, 0)
+billboard = 1
+double_sided = false
+text = "[ EXTRACTION LOCKED: SECURE RESEARCH DATA FIRST ]"
+font_size = 26
+outline_size = 6

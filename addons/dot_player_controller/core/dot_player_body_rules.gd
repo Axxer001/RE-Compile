@@ -1,0 +1,162 @@
+class_name DotPlayerBodyRules
+extends RefCounted
+
+## Whether players (people and bots alike) are solid to each other: the `mp_solidplayers` cvar, 1 by default.
+## Needs both halves: [method mask] on the controller and [method apply_hull] on the body, or nothing changes.
+## Reasoning: docs/rationale.md.
+
+signal changed
+
+const CVAR_SOLID := "mp_solidplayers"
+
+var solid: bool = true:
+	set(value):
+		if value == solid:
+			return
+		solid = value
+		changed.emit()
+
+
+## Whether two players stop at each other once players are solid: `(a, b) -> bool` over the keys
+## [method apply_exceptions] is given; unset, every pair stops. dot-team's `DotTeamBlockRules.blocks`
+## is the family's answer. `mp_solidplayers` 0 overrules it: nobody blocks.
+var pair_fn: Callable = Callable()
+
+
+## Whether [param a] and [param b] stop at each other: [member solid], then [member pair_fn].
+func blocks(a: Variant, b: Variant) -> bool:
+	return solid and (not pair_fn.is_valid() or bool(pair_fn.call(a, b)))
+
+
+## Re-announces [signal changed] after [member pair_fn]'s answers moved (a team change, a request).
+func refresh() -> void:
+	changed.emit()
+
+
+## Hands each controller the bodies it passes through. [param entries] maps a player key to a
+## [code]{"body": CollisionObject3D, "controller": Object}[/code] (a remote has no controller).
+## Call on every machine with the same keys, and again on [signal changed], or prediction disagrees.
+func apply_exceptions(entries: Dictionary) -> void:
+	for key: Variant in entries:
+		var mine: Dictionary = entries[key]
+		var controller: Object = mine.get("controller")
+		if controller == null or not is_instance_valid(controller) or not controller.has_method(&"set_extra_excludes"):
+			continue
+		var rids: Array[RID] = []
+		for other_key: Variant in entries:
+			if other_key == key:
+				continue
+			var other_body: Object = (entries[other_key] as Dictionary).get("body")
+			if other_body is CollisionObject3D and is_instance_valid(other_body) and not blocks(key, other_key):
+				rids.append((other_body as CollisionObject3D).get_rid())
+		controller.call(&"set_extra_excludes", rids)
+
+
+## The collision shape [method apply_hull] adds, by name.
+const HULL_NAME := &"SolidHull"
+
+
+## Gives [param body] a standing capsule while players are solid, and disables it while not.
+## Safe to repeat (the hull is looked up by name); call on every machine that simulates players
+## and again on [signal changed].
+func apply_hull(body: CollisionObject3D, height: float, radius: float) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var hull := body.get_node_or_null(NodePath(String(HULL_NAME))) as CollisionShape3D
+	if hull == null:
+		hull = CollisionShape3D.new()
+		hull.name = HULL_NAME
+		hull.shape = CapsuleShape3D.new()
+		body.add_child(hull)
+	var capsule := hull.shape as CapsuleShape3D
+	capsule.radius = radius
+	capsule.height = maxf(height, radius * 2.0)
+	hull.position = Vector3(0.0, capsule.height * 0.5, 0.0)
+	hull.disabled = not solid
+
+
+## Sets a controller's mask ([method mask]) and the layers it may walk out of, so players
+## spawned in one place walk apart. Duck-typed on `set_collision_mask` / `set_pass_out_layers`;
+## an older controller gets the mask alone.
+func apply_to(controller: Object, base: int, player_layers: int) -> void:
+	if controller == null or not is_instance_valid(controller):
+		return
+	if controller.has_method(&"set_collision_mask"):
+		controller.call(&"set_collision_mask", mask(base, player_layers))
+	if controller.has_method(&"set_pass_out_layers"):
+		controller.call(&"set_pass_out_layers", player_layers if solid else 0)
+
+
+## [param base] (a player's mask from the layout) with [param player_layers] added when
+## players are solid, removed when they are not.
+func mask(base: int, player_layers: int) -> int:
+	return (base | player_layers) if solid else (base & ~player_layers)
+
+
+func cvar_specs() -> Array[Dictionary]:
+	return [
+		{"name": CVAR_SOLID, "value": "1" if solid else "0", "min": 0.0, "max": 1.0,
+			"description": "Players and bots: 1 solid to each other, 0 they pass through each other"},
+	]
+
+
+## Registers `mp_solidplayers` (see [method DotPlayerViewRules.bind_cvars] for the shape of
+## [param add]). Pass dot-server's FLAG_REPLICATED: a client predicts its own player under it.
+func bind_cvars(add: Callable, flags: int = 0) -> Array:
+	var made: Array = []
+	for spec in cvar_specs():
+		var cvar_name: String = spec["name"]
+		var made_cvar: Variant = add.call(cvar_name, String(spec["value"]), String(spec["description"]), flags)
+		if not (made_cvar is Object) or made_cvar == null:
+			continue
+		var cv := made_cvar as Object
+		if cv.has_method(&"with_range"):
+			cv.call(&"with_range", float(spec["min"]), float(spec["max"]))
+		if cv.has_signal(&"changed"):
+			var on_change := _on_cvar_changed.bind(cvar_name)
+			if not cv.is_connected(&"changed", on_change):
+				cv.connect(&"changed", on_change)
+		if cv.has_method(&"get_string"):
+			var _applied := set_cvar(cvar_name, String(cv.call(&"get_string")))
+		made.append(cv)
+	return made
+
+
+## Follows a server's value through its link; false for an older shell's link.
+func follow_cvars(source: Object) -> bool:
+	if source == null or not is_instance_valid(source):
+		return false
+	if not source.has_method(&"replicated_cvar") or not source.has_signal(&"replicated_cvar_changed"):
+		return false
+	var held := String(source.call(&"replicated_cvar", CVAR_SOLID, ""))
+	if held != "":
+		var _applied := set_cvar(CVAR_SOLID, held)
+	if not source.is_connected(&"replicated_cvar_changed", _on_replicated_cvar):
+		source.connect(&"replicated_cvar_changed", _on_replicated_cvar)
+	return true
+
+
+func set_cvar(cvar_name: String, value: String) -> bool:
+	if cvar_name != CVAR_SOLID:
+		return false
+	var text := value.strip_edges()
+	if not text.is_valid_int():
+		return false
+	solid = text.to_int() != 0
+	return true
+
+
+func _on_cvar_changed(_old: Variant, new_value: Variant, cvar_name: String) -> void:
+	var _applied := set_cvar(cvar_name, str(new_value))
+
+
+func _on_replicated_cvar(cvar_name: String, value: String) -> void:
+	var _applied := set_cvar(cvar_name, value)
+
+
+func describe() -> Dictionary:
+	return {"solid": solid}
+
+
+func describe_lines() -> PackedStringArray:
+	return PackedStringArray(["players: %s" % ("solid to each other" if solid else "pass through each other")])

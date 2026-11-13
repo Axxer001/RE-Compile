@@ -1,0 +1,1080 @@
+@tool
+class_name DotFpsController
+extends "dot_fps_controller_signals.gd"
+
+## The player controller. Add it under a [Node3D] and it moves.
+##
+## [codeblock]
+## Player (CharacterBody3D or Node3D)
+##  ├── Collision   (CollisionShape3D)   sized by the controller
+##  ├── Head        (Node3D)
+##  │    └── Camera (Camera3D)
+##  ├── FpsView     (DotFpsView)
+##  └── FpsControl  (DotFpsController)   body_ref -> parent
+## [/codeblock]
+##
+## A component, not a base class: a host's player already extends what it needs. Everything it touches goes through a [DotNodeRef], so the layout above is a suggestion.
+## [constant Drive.LOCAL] samples the keyboard and ticks itself; [constant Drive.EXTERNAL] is fed by a net behaviour, replay or bot through [method apply_command] and [method simulate_tick]. The simulation is identical.
+## dot-net is not required; see [DotFpsNetSync] and docs/networking.md.
+## It extends [DotPlayerController] for an identity and handover by a [DotPlayerControllerSwitch]; all of it is inert without a [DotPlayer] ancestor.
+
+const CHANNEL := "fps"
+const SERVICE := &"dot_fps_controller"
+
+## Who supplies commands and drives ticks.
+enum Drive {
+	## Sample input and tick in [method Node._physics_process]. Single-player.
+	LOCAL,
+	## Someone else calls [method apply_command] and [method simulate_tick].
+	EXTERNAL,
+	## Simulate nothing; only apply state written from elsewhere.
+	## For a remote player's copy: running the motor on arriving network state would fight it.
+	REMOTE,
+}
+
+@export_group("Role")
+
+@export var drive: Drive = Drive.LOCAL
+
+## Simulation ticks per second in [constant Drive.LOCAL].
+## Ignored in the other modes, where the driver sets the rate (dot-net: [code]DotNetConfig.tick_rate[/code]). It must match on client and server: delta is an input to the simulation.
+@export_range(1, 240, 1) var tick_rate: int = 60
+
+## [member DotFpsMotor.static_world]: nothing the body queries moves between ticks. Off by default.
+@export var static_world: bool = false
+
+## Register in [DotRegistry] under [constant SERVICE] so other systems can find this.
+## Off by default: it is a global name and several players would overwrite each other. Set [member service_scope] for that case.
+@export var register_service: bool = false
+
+## Suffix for the registry name, so several controllers can coexist.
+@export var service_scope: StringName = &""
+
+@export_group("Configuration")
+
+## Movement tunables. One is created with the defaults if this is left empty.
+@export var tunables: DotFpsTunables = null
+
+## The surfaces this game has. Null means every surface behaves identically.
+##
+## Opt-in: without one, the surface lookup never runs and costs nothing.
+@export var surfaces: DotFpsSurfaceSet = null
+
+## The movement style in force for this player, or null for the base tunables.
+## Assign in the inspector or through [method set_style], never at runtime: the motor holds the tunables it was built with, so a bare assignment changes nothing.
+@export var style: DotFpsStyle = null
+
+## JSON file layered over the exported defaults. Empty disables the file layer.
+## Layering order: exported defaults, this file, [code]DOT_FPS_*[/code], [code]--fps-*[/code].
+@export var config_file: String = ""
+
+## Apply the environment and command-line layers.
+## Wanted on a dedicated server, not in a client, where an ambient variable silently changing movement is a support call.
+@export var load_layered_config: bool = false
+
+@export_group("Wiring")
+
+## The node the simulated position is written to. Defaults to the parent.
+@export var body_ref: DotNodeRef = null
+
+## The collision shape resized when crouching. Optional but strongly recommended.
+## Without it the simulation crouches and the host's collider does not, so a bullet trace sees a standing player.
+@export var collider_ref: DotNodeRef = null
+
+## The view. Optional: a headless server has nothing to look through.
+@export var view_ref: DotNodeRef = null
+
+@export_group("Safety")
+
+## Whether this instance honours the noclip button at all.
+## Deliberately redundant with [member DotFpsTunables.can_noclip]: that is shared config the client also holds; this is one controller's property, which a server sets from its own permissions.
+@export var allow_noclip: bool = false
+
+## Register [DotFpsAdminModifiers] (forced noclip, freeze, speed and gravity steps) so a server can apply them and the owning client predicts them.
+## Set it on every machine or on none: registration order is the wire contract, and a mismatch makes each replicated index mean a different modifier.
+@export var admin_abilities: bool = false
+
+## Register this addon's default input bindings if the project has none.
+@export var register_default_actions: bool = true
+
+## On a touch device ([method DotPlatform.has_touch]) a local controller samples touch ([DotFpsTouchSampler]): a stick, a look drag, and buttons the game holds.
+@export var use_touch_sampler: bool = true
+
+## The simulated state. Authoritative in [constant Drive.LOCAL] and
+## [constant Drive.EXTERNAL]; written from the network in [constant Drive.REMOTE].
+var state: DotFpsState = DotFpsState.new()
+
+var motor: DotFpsMotor = null
+var body: DotFpsBody = null
+var sampler: DotFpsSampler = null
+var view: DotFpsView = null
+
+## The command applied on the most recent tick. Held so a driver can resend it.
+var current_command: DotFpsCommand = null
+
+## Movement statistics for the current run: jumps, strafes, sync, speed.
+## Folded once per simulated tick and not during a replay, or a client under packet loss would count jumps that climb on their own.
+var stats := DotFpsStats.new()
+
+## The tunables before the style was applied. See [method set_style].
+## A style derives from the original, not the previous style's output, or two changes compound their scales.
+var _pass_out_mask: int = 0
+var _extra_exclude: Array[RID] = []
+var _base_tunables: DotFpsTunables = null
+
+## The command the statistics last saw, for their own edge detection.
+var _stats_previous: DotFpsCommand = null
+
+var _body_node: Node3D = null
+var _collider: CollisionShape3D = null
+var _capsule: CapsuleShape3D = null
+
+## State at the end of the previous tick, for render interpolation.
+var _previous_state: DotFpsState = DotFpsState.new()
+
+## Where the player stood two ticks back, for a frame drawn before [member _previous_state]
+## (a [member render_clock] alpha below 0). NAN until a tick has run since the last reset.
+var _position_two_back: Vector3 = Vector3(NAN, NAN, NAN)
+
+## The clock this controller's ticks are counted on, for a client predicting it: anything with a [code]render_alpha() -> float[/code] (dot-net's [code]DotNetClock[/code]), asked by name so this addon needs no dot-net. Null draws at the engine's physics fraction. See [method render_state].
+## A connected client's ticks are the clock's: it stretches them while it settles, so a physics frame runs no tick and a later one two, and drawing at the engine's fraction jumped the eye 10 to 16 cm on 4 to 8 frames in 5 s at 60 Hz.
+## Set it by [code]controller.set(&"render_clock", clock)[/code] from a game pack, so a shell with an older copy of this addon ignores it.
+var render_clock: Object = null
+
+## collider instance id -> surface id. See _resolve_surface_id.
+var _surface_cache: Dictionary = {}
+
+## The modifier set as of the last time changes were reported. See _report_changes.
+var _last_modifiers: Array[Vector2i] = []
+
+var _replaying: bool = false
+
+var _accumulator: float = 0.0
+var _tick: int = 0
+var _started: bool = false
+var _registered_name: StringName = &""
+
+
+
+func _ready() -> void:
+	if Engine.is_editor_hint():
+		return
+
+	if controller_id == &"":
+		controller_id = &"fp"
+
+	# Binds this node to its DotPlayer, when there is one. Harmless and inert when
+	# there is not, which is the case in three of the four games that use this addon.
+	super()
+
+	var res := setup()
+
+	if not res.ok:
+		DotLog.result(CHANNEL, "controller setup", res)
+		set_physics_process(false)
+		return
+
+	set_physics_process(drive == Drive.LOCAL)
+
+
+## Builds everything. Called by [method Node._ready]; safe to call again after
+## changing the tunables.
+func setup() -> DotResult:
+	if tunables == null:
+		tunables = DotFpsTunables.new()
+
+	if _base_tunables == null:
+		_base_tunables = tunables
+
+	# Always from the base, never from whatever the last style left behind. Calling
+	# setup() twice with a style set must not apply it twice.
+	if style != null:
+		tunables = style.apply_to(_base_tunables)
+	else:
+		tunables = _base_tunables
+
+	if load_layered_config or config_file != "":
+		var loaded := tunables.load_layered(config_file)
+		if not loaded.ok:
+			return loaded.wrap("Movement configuration is not usable.")
+	else:
+		var valid := tunables.validate()
+		if not valid.ok:
+			return valid.wrap("Movement configuration is not usable.")
+
+	# The noclip gate is applied per tick, not here (see _gate_abilities): the tunables are a Resource the host keeps,
+	# so anything assigning can_noclip later (a server reloading config mid-round) would re-open a gate set once at setup.
+	_gate_abilities()
+
+	var wired := _resolve_nodes()
+	if not wired.ok:
+		return wired
+
+	body = _make_body()
+	motor = DotFpsMotor.new(tunables, body)
+	motor.set_tick_rate(tick_rate)
+	motor.static_world = static_world
+	DotFpsNetSync.set_tick_rate(tick_rate)
+
+	if surfaces != null:
+		motor.surfaces = surfaces
+		motor.surface_resolver = _resolve_surface_id
+
+	_register_extensions()
+
+	# A host's own modes, after a subclass's, in list order: the same order on every machine
+	# and on every rebuild (a style rebuilds the motor, which would otherwise drop them).
+	for extra: Variant in extra_modes:
+		if extra is DotFpsMoveMode:
+			var _id := motor.register_mode(extra)
+
+	# After the game's own, so turning this on does not renumber a game's modifiers.
+	if admin_abilities:
+		var _count := DotFpsAdminModifiers.register(motor)
+
+	_setup_sampler()
+
+	if _body_node != null:
+		state.position = _body_node.global_position
+		_previous_state.copy_from(state)
+	_position_two_back = Vector3(NAN, NAN, NAN)
+
+	_apply_collider(state)
+
+	if register_service:
+		_registered_name = (
+			DotRegistry.scoped_name(SERVICE, service_scope)
+			if service_scope != &""
+			else SERVICE
+		)
+		DotRegistry.register(_registered_name, self)
+
+	_started = true
+
+	DotLog.info(
+		CHANNEL,
+		"controller ready",
+		{
+			"drive": Drive.keys()[drive],
+			"tick_rate": tick_rate,
+			"movement": tunables.describe_summary(),
+		}
+	)
+
+	return DotResult.success(null)
+
+
+## A local controller samples its own input; warns when the actions it reads are not bound.
+func _setup_sampler() -> void:
+	if drive == Drive.LOCAL:
+		if use_touch_sampler and DotPlatform.has_touch():
+			var touch := DotFpsTouchSampler.new(tunables)
+			touch.set_screen_width(get_viewport().get_visible_rect().size.x if is_inside_tree() else 1152.0)
+			sampler = touch
+		else:
+			sampler = DotFpsSampler.new(tunables)
+
+		if register_default_actions:
+			DotFpsSampler.register_default_actions(sampler)
+
+		var missing := sampler.missing_actions()
+		if not missing.is_empty():
+			# Not an error — a game may drive this without a keyboard at all — but a
+			# missing action in Godot is silence, and the symptom is a controller
+			# that runs flawlessly and does not move.
+			DotLog.warn(
+				CHANNEL,
+				"input actions are not bound; the player will not move",
+				{"actions": ", ".join(missing)}
+			)
+
+		sampler.look_at_angles(state.yaw, state.pitch)
+
+
+func _resolve_nodes() -> DotResult:
+	if body_ref == null:
+		body_ref = DotNodeRef.new()
+		body_ref.mode = DotNodeRef.Mode.PARENT
+
+	var resolved := body_ref.resolve(self)
+	if not resolved.ok:
+		return resolved.wrap("Could not resolve the player body.")
+
+	_body_node = resolved.value as Node3D
+
+	if _body_node == null:
+		return DotResult.fail(
+			DotError.CODE_INVALID,
+			"The player body must be a Node3D.",
+			body_ref.describe()
+		)
+
+	# Unset refs fall back to "the obvious node under the body": a player has one collider and one view. An explicit ref always wins.
+	if collider_ref == null:
+		collider_ref = _descendant_ref(&"CollisionShape3D")
+
+	if view_ref == null:
+		view_ref = _descendant_ref(&"DotFpsView")
+
+	if collider_ref != null:
+		# Resolved against the body, not against this node: the collider is a sibling
+		# of the controller, so a descendant search from here would find nothing.
+		var collider := collider_ref.resolve_or_null(_body_node, CHANNEL)
+		_collider = collider as CollisionShape3D
+
+		if _collider != null:
+			# Never shared: a CapsuleShape3D from a .tscn is shared between every
+			# instance of that scene, so resizing one player's collider on crouch
+			# would resize every player's. Costs one resource per controller.
+			_capsule = CapsuleShape3D.new()
+			_capsule.radius = tunables.radius
+			_capsule.height = tunables.stand_height
+			_collider.shape = _capsule
+		elif collider != null:
+			DotLog.warn(
+				CHANNEL,
+				"collider_ref resolved a %s, not a CollisionShape3D; "
+				% collider.get_class()
+				+ "the collider will not follow the crouch",
+				{"ref": collider_ref.describe()}
+			)
+
+	if view_ref != null:
+		view = view_ref.resolve_or_null(_body_node, CHANNEL) as DotFpsView
+
+	if view != null:
+		# The landing kick is the one view effect that needs an event rather than a
+		# state, so it is wired here instead of leaving every game to remember it. Guarded:
+		# this runs again when the controller re-enters the tree.
+		if not landed.is_connected(view.note_landing):
+			landed.connect(view.note_landing)
+
+	return DotResult.success(null)
+
+
+## A ref that finds the nearest descendant of a type, or nothing.
+## [constant DotNodeRef.OnMissing.NULL], not FAIL: "no view" is a headless server, not an error.
+static func _descendant_ref(type: StringName) -> DotNodeRef:
+	var ref := DotNodeRef.new()
+	ref.mode = DotNodeRef.Mode.DESCENDANT_OF_TYPE
+	ref.type_name = type
+	ref.on_missing = DotNodeRef.OnMissing.NULL
+	return ref
+
+
+## Registers this game's movement modes and modifiers. Override and call the motor.
+## Called before the first tick in a fixed order on every machine: ids are handed out by registration order and travel on the wire, so conditional registration gives two peers different ids.
+##
+## [codeblock]
+## func _register_extensions() -> void:
+##     motor.register_modifier(preload("res://movement/speed_pad.tres"))
+##     _ladder = motor.register_mode(LadderMode.new())
+## [/codeblock]
+func _register_extensions() -> void:
+	pass
+
+
+## Movement modes a host adds without subclassing (water, a ladder), registered on every
+## [method setup] straight after [method _register_extensions], in this order. Every
+## machine must list the same modes in the same order: the mode id is on the wire.
+var extra_modes: Array[DotFpsMoveMode] = []
+
+
+## Maps a collider to a surface id, for the motor.
+## Reads scene metadata, not the physics handle, whose instance id differs between client and server. Cached until the player steps onto a different collider.
+func _resolve_surface_id(collider_id: int) -> StringName:
+	if _surface_cache.has(collider_id):
+		return _surface_cache[collider_id]
+
+	var resolved := &""
+	var node := instance_from_id(collider_id)
+
+	if node is Node:
+		resolved = DotFpsSurfaceSet.resolve_from_node(
+			node as Node, surfaces.metadata_key, surfaces.group_prefix
+		)
+
+	# Bounded so a level with thousands of colliders cannot grow this without limit.
+	# Clearing wholesale rather than evicting one entry: the cache is a pure function
+	# of the scene, so rebuilding it costs one lookup per collider actually walked on.
+	if _surface_cache.size() > 512:
+		_surface_cache.clear()
+
+	_surface_cache[collider_id] = resolved
+	return resolved
+
+
+## Called before the motor runs, on the tick about to be simulated.
+## Override for anything inside the simulation. It runs during replays too, so it is bound by the determinism rule of [method DotFpsMotor.simulate]: no wall clock, no unseeded random.
+func _on_pre_simulate(_tick: int, _delta: float) -> void:
+	pass
+
+
+## Called after the motor runs and the scene has been updated.
+## For cosmetic or non-simulated work; it also runs during a replay, so check [method is_replaying] before a side effect.
+func _on_post_simulate(_tick: int, _delta: float) -> void:
+	pass
+
+
+## Whether the tick being simulated is a prediction replay rather than a fresh one.
+## Anything that fires a sound or sends a message must not repeat it on a replay.
+func is_replaying() -> bool:
+	return _replaying
+
+
+## Marks the following ticks as a replay. dot-net's reconciliation calls this.
+func begin_replay() -> void:
+	_replaying = true
+
+
+func end_replay() -> void:
+	_replaying = false
+
+
+## Whether a command should be simulated at all. Override to veto input.
+## Returning false substitutes a neutral command, because skipping a tick desynchronises the tick counter.
+func _accept_command(_command: DotFpsCommand) -> bool:
+	return true
+
+
+
+## Applies a modifier. Server-side in a networked game; replicated to the owner.
+func add_modifier(id: StringName) -> bool:
+	return motor != null and motor.add_modifier(state, id)
+
+
+func remove_modifier(id: StringName) -> bool:
+	return motor != null and motor.remove_modifier(state, id)
+
+
+func has_modifier(id: StringName) -> bool:
+	return motor != null and motor.has_modifier(state, id)
+
+
+## Puts this player on a movement style, rebuilding everything that depends on it. Pass null to go back to the unstyled tunables.
+## Rebuilds the motor: it holds the tunables, so assigning [member style] alone changes nothing.
+## Not safe mid-run in a timed game: it changes what every later tick produces, so the timer treats it as stopping the run.
+func set_style(new_style: DotFpsStyle) -> DotResult:
+	if _base_tunables == null:
+		_base_tunables = tunables
+
+	style = new_style
+
+	if not _started:
+		# setup() has not run yet, so it will pick the style up itself and rebuilding
+		# now would build against unresolved node references.
+		return DotResult.success(null)
+
+	var rebuilt := setup()
+
+	if not rebuilt.ok:
+		return rebuilt.wrap("Could not apply the movement style.")
+
+	stats.reset()
+	_stats_previous = null
+
+	return DotResult.success(null)
+
+
+## The collision layers this player's movement sweeps, set so it survives a style.
+## Use this, not `tunables.collision_mask`: a style rebuilds [member tunables] from the base copy, so a mask on the live tunables reverts at the next [method set_style].
+## The base, the live tunables and the body all take it.
+func set_collision_mask(mask: int) -> void:
+	if _base_tunables != null:
+		_base_tunables.collision_mask = mask
+	if tunables != null:
+		tunables.collision_mask = mask
+	if body != null:
+		body.collision_mask = mask
+
+
+## Layers this player may walk out of when it starts inside them (other players' hulls; see
+## [member DotFpsBody.pass_out_mask]). Kept across a rebuilt body.
+func set_pass_out_layers(mask: int) -> void:
+	_pass_out_mask = mask
+	if body != null:
+		body.pass_out_mask = mask
+
+
+## Bodies this player passes through although their hulls are solid: a pair the game's rules let
+## through (`DotPlayerBodyRules.apply_exceptions`). Kept across a rebuilt body, and excluded from
+## every query the body makes, so a rest or ground question ignores them as the sweep does.
+func set_extra_excludes(rids: Array[RID]) -> void:
+	_extra_exclude = rids.duplicate()
+	if body != null:
+		body.exclude = _exclude_list()
+
+
+func _exclude_list() -> Array[RID]:
+	var out: Array[RID] = []
+	if _body_node is CollisionObject3D:
+		out.append((_body_node as CollisionObject3D).get_rid())
+	out.append_array(_extra_exclude)
+	return out
+
+
+## Switches movement mode, running the mode's exit and enter hooks.
+func set_mode(mode: int) -> void:
+	if motor != null:
+		motor.set_mode(state, mode)
+
+
+## A [DotFpsSimulator] of this player's movement: a second motor with copies of its tunables, body, modifiers and modes, which a bot runs ahead on copies of [member state].
+## [param p_body] replaces the copy of [member body]. Null before [method setup] or when the body cannot be copied.
+## Build a new one after a style or map changes the tunables or body; it does not follow them.
+func simulator(p_body: DotFpsBody = null) -> DotFpsSimulator:
+	if motor == null:
+		return null
+	return DotFpsSimulator.new().setup(tunables, motor, body, tick_rate, p_body)
+
+
+## Builds the collision adapter. Override to simulate against your own geometry.
+func _make_body() -> DotFpsBody:
+	var physics := DotFpsPhysicsBody.new()
+	physics.collision_mask = tunables.collision_mask
+	physics.pass_out_mask = _pass_out_mask
+
+	# Our own collider is excluded, or every downward probe hits it and the player stands on
+	# themselves at the height they spawned.
+	physics.exclude = _exclude_list()
+
+	var bound := physics.bind(_body_node)
+	if not bound.ok:
+		DotLog.result(CHANNEL, "physics body", bound)
+
+	return physics
+
+
+func _exit_tree() -> void:
+	if _registered_name != &"":
+		DotRegistry.unregister_instance(_registered_name, self)
+		_registered_name = &""
+
+
+
+func _input(event: InputEvent) -> void:
+	if drive == Drive.LOCAL and sampler != null:
+		if sampler is DotFpsTouchSampler:
+			(sampler as DotFpsTouchSampler).set_screen_width(get_viewport().get_visible_rect().size.x)
+		sampler.handle_event(event)
+
+
+func _physics_process(delta: float) -> void:
+	if not _started or drive != Drive.LOCAL:
+		return
+
+	# A fixed step accumulated from the frame time, not the frame's own delta: determinism needs a constant step both peers agree on, and a variable one tunes differently on a faster-rendering machine.
+	var step := 1.0 / float(maxi(1, tick_rate))
+	_accumulator += delta
+
+	# Bounded so a frame spike — a shader compile, a level load — does not spend the
+	# next frame simulating a hundred ticks and make the stall worse.
+	var budget := 8
+
+	while _accumulator >= step and budget > 0:
+		_accumulator -= step
+		budget -= 1
+
+		apply_command(sampler.sample(step))
+		simulate_tick(_tick + 1, step)
+
+	if _accumulator >= step:
+		DotLog.debug(
+			CHANNEL,
+			"tick budget exhausted; dropping simulation time",
+			{"dropped": "%.3f s" % _accumulator}
+		)
+		_accumulator = 0.0
+
+
+func _process(delta: float) -> void:
+	if Engine.is_editor_hint() or not _started:
+		return
+
+	if view != null:
+		var drawn := render_state()
+		# The view as of this frame's mouse, not the last tick's: a frame that ran no tick
+		# would otherwise not turn. See [method DotFpsSampler.look_now].
+		if drive == Drive.LOCAL and sampler != null:
+			var look := sampler.look_now()
+			drawn.yaw = look.x
+			drawn.pitch = look.y
+		view.apply(drawn, motor, delta)
+
+
+
+## Sets the command the next [method simulate_tick] will use.
+## Sanitised here so a driver cannot forget: on a server every field arrived from a client.
+func apply_command(command: DotFpsCommand) -> void:
+	if command == null:
+		return
+
+	command.sanitise(tunables.pitch_min, tunables.pitch_max)
+
+	# Before the motor, on both machines, in place and idempotent: filtering only on the server makes the client predict movement the server will not produce,
+	# and a replay runs this again over the stored commands.
+	if style != null:
+		style.filter_command(command)
+
+	current_command = command
+
+
+## Advances the simulation by one tick.
+## [param delta] must be the fixed tick duration, not a frame time. Under dot-net it runs on the server and the predicting client with the identical command.
+func simulate_tick(tick: int, delta: float) -> void:
+	if not _started or drive == Drive.REMOTE:
+		return
+
+	var prof_t := Time.get_ticks_usec() if DotFpsMotor.profile else 0
+
+	# Re-applied every tick so it cannot be undone by anything that touches the
+	# tunables between ticks.
+	_gate_abilities()
+
+	if current_command == null:
+		# A starved tick repeats the last command (keeps the view and held buttons, drops the
+		# movement), as the netcode expects; a fresh command has yaw and pitch zero and would
+		# turn the player north for a tick.
+		current_command = _repeat_command()
+
+	if not _accept_command(current_command):
+		# Substituted, not skipped: skipping leaves the tick counter behind the server's.
+		current_command = DotFpsCommand.new()
+		current_command.yaw = state.yaw
+		current_command.pitch = state.pitch
+
+	# A reset (setup, teleport) makes the previous state the current one.
+	_position_two_back = _previous_state.position
+	_previous_state.copy_from(state)
+
+	var before_mode := state.mode
+	var before_y := state.position.y
+	var before_fall := state.velocity.y
+	var before_crouched := state.is_crouched()
+	var before_surface := state.surface
+	var before_sliding := state.is_sliding()
+	var before_launches := motor.launches
+	var before_dashes := motor.dashes
+	var before_wall_running := state.is_wall_running()
+	var before_wall_jumps := motor.wall_jumps
+
+	if prof_t != 0:
+		_lap_ctrl(0, prof_t)
+	_on_pre_simulate(tick, delta)
+
+	_consume_external_velocity(state, _replaying)
+
+	# Every tick: a game sets the tunables' mask after setup, and the body copied it when built.
+	if body != null and body.collision_mask != tunables.collision_mask:
+		body.collision_mask = tunables.collision_mask
+
+	if prof_t != 0:
+		_lap_ctrl(1, prof_t)
+	motor.simulate(state, current_command, delta)
+	if prof_t != 0:
+		_lap_ctrl(2, prof_t)
+
+	_tick = tick
+	_publish(before_mode, before_y, before_fall)
+	if prof_t != 0:
+		_lap_ctrl(3, prof_t)
+	_report_changes(before_crouched, before_surface)
+	if prof_t != 0:
+		_lap_ctrl(4, prof_t)
+
+	if not _replaying:
+		if state.is_sliding() != before_sliding:
+			slide_changed.emit(state.is_sliding())
+
+		if motor.launches != before_launches:
+			launched.emit()
+
+		if motor.dashes != before_dashes:
+			dashed.emit()
+
+		if motor.wall_jumps != before_wall_jumps:
+			wall_jumped.emit()
+
+		if state.is_wall_running() != before_wall_running:
+			wall_run_changed.emit(state.is_wall_running())
+
+		if motor.view_turn != 0.0:
+			view_turned.emit(motor.view_turn)
+			if sampler != null:
+				sampler.look_at_angles(sampler.yaw + motor.view_turn, sampler.pitch)
+
+	# Not during a replay: the statistics have seen that tick, and a lossy client would double-count.
+	if not _replaying:
+		state.airborne_time = (state.airborne_time + delta) if state.mode == DotFpsState.Mode.AIR else 0.0
+		stats.observe(state, current_command, _stats_previous, delta)
+		if motor.perf_caches:
+			# Observe only asks whether there was a previous command (null on the first tick and after a style change), never reads it: one object kept, not one allocated a tick.
+			if _stats_previous == null:
+				_stats_previous = current_command.duplicate_command()
+		else:
+			_stats_previous = current_command.duplicate_command()
+
+	if prof_t != 0:
+		_lap_ctrl(5, prof_t)
+	_on_post_simulate(tick, delta)
+
+	simulated.emit(tick, state)
+	if prof_t != 0:
+		_lap_ctrl(6, prof_t)
+
+
+## Per-phase microseconds of [method simulate_tick] outside the motor, filled only while [member DotFpsMotor.profile] is on: pre (copy, gates), consume+mask, motor, publish, report, signals+stats, post.
+static var phase_us := PackedInt64Array([0, 0, 0, 0, 0, 0, 0, 0])
+var _lap_ctrl_at: int = 0
+
+
+func _lap_ctrl(phase: int, start: int) -> void:
+	var now := Time.get_ticks_usec()
+	phase_us[phase] += now - (start if phase == 0 else _lap_ctrl_at)
+	_lap_ctrl_at = now
+
+
+## Emits the change signals for anything the tick altered.
+## Diffed here so a game gets one edge per change instead of polling.
+func _report_changes(
+	before_crouched: bool,
+	before_surface: StringName
+) -> void:
+	if state.is_crouched() != before_crouched:
+		crouch_changed.emit(state.is_crouched())
+
+	if state.surface != before_surface:
+		surface_changed.emit(before_surface, state.surface)
+
+	# Modifiers are diffed against a baseline that persists across ticks, not one captured at the top of this one:
+	# a modifier applied between ticks is already present when the next starts, so a same-tick baseline never reports "added".
+	# It also reports state at a tick boundary, where the replicated copy changes, so client and server agree when it started.
+	if state.modifiers == _last_modifiers:
+		return
+
+	var before_modifiers := _last_modifiers
+	_last_modifiers = state.modifiers.duplicate()
+
+	# Small arrays — usually empty, rarely more than two or three — so a linear
+	# comparison is cheaper than building sets to diff them.
+	for entry in state.modifiers:
+		if not _contains_modifier(before_modifiers, entry.x):
+			var added := motor.modifier_at(entry.x)
+			if added != null:
+				modifier_added.emit(added.id)
+
+	for entry in before_modifiers:
+		if not _contains_modifier(state.modifiers, entry.x):
+			var removed := motor.modifier_at(entry.x)
+			if removed != null:
+				modifier_removed.emit(removed.id)
+
+
+static func _contains_modifier(entries: Array[Vector2i], index: int) -> bool:
+	for entry in entries:
+		if entry.x == index:
+			return true
+	return false
+
+
+## Closes off anything this instance is not permitted to do.
+## Two gates: [member DotFpsTunables.can_noclip] is shared config the client holds and sets the command bit for; [member allow_noclip] is one controller's property a server grants per player.
+func _gate_abilities() -> void:
+	if tunables != null and not allow_noclip:
+		tunables.can_noclip = false
+
+
+func _repeat_command() -> DotFpsCommand:
+	var repeated := DotFpsCommand.new()
+	repeated.buttons = state.previous_buttons
+	repeated.yaw = state.yaw
+	repeated.pitch = state.pitch
+	# Movement is dropped but buttons are kept: a held crouch should stay held
+	# through a dropped packet, whereas continuing to run in a direction the player
+	# may have released is the version of this that walks people off ledges.
+	return repeated
+
+
+## Writes the simulated state out to the scene, and reports what changed.
+func _publish(
+	before_mode: DotFpsState.Mode,
+	before_y: float,
+	before_fall: float
+) -> void:
+	var pt := Time.get_ticks_usec() if DotFpsMotor.profile else 0
+	if _body_node != null:
+		_body_node.global_position = state.position
+	if pt != 0:
+		phase_us[7] += Time.get_ticks_usec() - pt
+
+	_apply_collider(state)
+
+	if before_mode != state.mode:
+		mode_changed.emit(before_mode, state.mode)
+
+		if (
+			state.mode == DotFpsState.Mode.GROUND
+			and before_mode == DotFpsState.Mode.AIR
+		):
+			landed.emit(absf(before_fall))
+		elif (
+			state.mode == DotFpsState.Mode.AIR
+			and before_mode == DotFpsState.Mode.GROUND
+			and state.velocity.y > 0.0
+		):
+			jumped.emit()
+
+	# A grounded tick that gained height is a stair step, not a jump — the view
+	# absorbs it so the camera does not jolt once per tread.
+	if state.mode == DotFpsState.Mode.GROUND:
+		var gained := state.position.y - before_y
+		if gained > 0.001 and gained <= tunables.step_height + 0.01:
+			if view != null:
+				view.note_step_up(gained)
+			stepped_up.emit(gained)
+
+
+func _apply_collider(from: DotFpsState) -> void:
+	if _capsule == null:
+		return
+
+	var height := tunables.height_at(from.crouch_fraction)
+	var shape_height := maxf(height, tunables.radius * 2.0)
+
+	# Written only when it differs from the shape: assigning a size, even the same one, makes the shape emit `changed` and re-send itself to the physics server
+	# (the physics body does the same in `DotFpsPhysicsBody._configure`). Compared against the shape itself, so a size changed from outside is still put back.
+	if _capsule.height != shape_height:
+		_capsule.height = shape_height
+
+	if _capsule.radius != tunables.radius:
+		_capsule.radius = tunables.radius
+
+	if _collider != null:
+		# The collider's origin is its centre and the body's is its feet.
+		var centre := height * 0.5
+		if _collider.position.y != centre:
+			_collider.position.y = centre
+
+
+
+## The state to render this frame, interpolated between the last two ticks.
+## Rendering the tick state directly quantises motion to the tick rate. Purely cosmetic: the returned state is a copy and nothing writes it back.
+## [param alpha] is how far this frame sits between the last two ticks; left at -1 it is derived from who drives:
+##
+## - [constant Drive.LOCAL] ticks from its own accumulator, so that is the fraction.
+## - [constant Drive.EXTERNAL] is stepped once per physics frame by its host, so the engine's interpolation fraction is it, but only while the physics rate equals the tick rate:
+##   at 60 against a 128-tick server the drawn position moved 74 mm on six frames in seven and 112 mm on the seventh. Put the engine on the server's rate ([method G2GNetBridge._adopt_tick_rate]).
+##   With a [member render_clock] set, its [code]render_alpha()[/code] replaces the fraction and runs from -1 to 2 after a frame with no tick or two.
+## - [constant Drive.REMOTE] is not simulated here; its position arrives already interpolated by [DotNetInterpolator], and blending toward a [member _previous_state] nothing updates would drag it backwards.
+func render_state(alpha: float = -1.0) -> DotFpsState:
+	if drive == Drive.REMOTE or tick_rate <= 0:
+		return state
+
+	var beyond := 0.0
+	if alpha < 0.0:
+		if drive == Drive.LOCAL:
+			alpha = clampf(_accumulator / (1.0 / float(tick_rate)), 0.0, 1.0)
+		elif (
+			render_clock != null and is_instance_valid(render_clock)
+			and render_clock.has_method(&"render_alpha")
+		):
+			# By name: the clock is dot-net's, which this addon does not depend on, and
+			# one older than `render_alpha` leaves the engine's fraction in charge.
+			var from_clock := float(render_clock.call(&"render_alpha"))
+			alpha = clampf(from_clock, 0.0, 1.0)
+			beyond = clampf(from_clock, -1.0, 2.0) - alpha
+		else:
+			alpha = Engine.get_physics_interpolation_fraction()
+
+	alpha = clampf(alpha, 0.0, 1.0)
+
+	var blended := state.duplicate_state()
+	blended.position = _previous_state.position.lerp(state.position, alpha)
+	if beyond > 0.0:
+		# Later than the newest tick (a slip that ran a physics frame with no tick): on
+		# along the last tick's step, as the drawing would have been had the tick run.
+		blended.position += (state.position - _previous_state.position) * beyond
+	elif beyond < 0.0 and _position_two_back.is_finite():
+		# Earlier than the previous tick (a physics frame that ran two): between the two
+		# before. Clamped to the previous tick when there is no third, as before.
+		blended.position = _position_two_back.lerp(_previous_state.position, 1.0 + beyond)
+	blended.crouch_fraction = lerpf(
+		_previous_state.crouch_fraction, state.crouch_fraction, alpha
+	)
+
+	# View angles are not interpolated: blending toward the previous tick adds a frame of latency to aiming.
+	# They are the last tick's, a frame behind the mouse on a frame with no tick; a renderer draws `DotFpsSampler.look_now()` over them for its own player.
+	return blended
+
+
+
+## Moves the player, discarding velocity and smoothing.
+## Under dot-net this is server-authoritative: a client that teleported itself is corrected on the next snapshot.
+func teleport(
+	position: Vector3,
+	yaw: float = NAN,
+	pitch: float = NAN
+) -> void:
+	state.position = position
+	state.velocity = Vector3.ZERO
+	state.mode = DotFpsState.Mode.AIR
+	state.time_since_grounded = 0.0
+	state.airborne_time = 0.0
+
+	if is_finite(yaw):
+		state.yaw = yaw
+	if is_finite(pitch):
+		state.pitch = clampf(pitch, tunables.pitch_min, tunables.pitch_max)
+
+	_previous_state.copy_from(state)
+	_position_two_back = Vector3(NAN, NAN, NAN)
+	_last_modifiers = state.modifiers.duplicate()
+
+	if sampler != null:
+		sampler.look_at_angles(state.yaw, state.pitch)
+
+	if _body_node != null:
+		_body_node.global_position = position
+
+	if view != null:
+		view.snap()
+
+
+
+## Facts a statistics rule can read about this player right now: airborne, airborne_seconds, wall_running, sliding and speed. dot-combat reads it duck-typed from a victim's controller; only a simulating (server) controller has true values.
+func get_stats_facts() -> Dictionary:
+	return {
+		"airborne": state.mode == DotFpsState.Mode.AIR,
+		"airborne_seconds": state.airborne_time,
+		"wall_running": state.is_wall_running(),
+		"sliding": state.is_sliding(),
+		"speed": state.speed(),
+	}
+
+
+func describe() -> Dictionary:
+	return {
+		"drive": Drive.keys()[drive],
+		"tick": _tick,
+		"tick_rate": tick_rate,
+		"allow_noclip": allow_noclip,
+		"admin_abilities": admin_abilities,
+		"state": state.describe(),
+		"motor": motor.describe() if motor != null else {},
+		"sampler": sampler.describe() if sampler != null else {},
+		"view": view.describe() if view != null else {},
+	}
+
+
+func describe_lines() -> PackedStringArray:
+	var out := PackedStringArray()
+	out.append("drive        %s   tick %d @ %d Hz" % [
+		Drive.keys()[drive], _tick, tick_rate
+	])
+	out.append("movement     %s" % tunables.describe_summary())
+	out.append("mode         %s" % DotFpsState.mode_name(state.mode, motor))
+
+	if state.surface != &"":
+		out.append("surface      %s" % state.surface)
+
+	if not state.modifiers.is_empty():
+		var names := PackedStringArray()
+		for entry in state.modifiers:
+			var definition := motor.modifier_at(entry.x)
+			names.append(String(definition.id) if definition != null else "?")
+		out.append("modifiers    %s" % ", ".join(names))
+	out.append_array(state.describe_lines())
+
+	if motor != null:
+		out.append("stuck_ticks  %d" % motor.stuck_ticks)
+
+	return out
+
+
+# The DotPlayerController contract: five small methods and one translation, unused unless a DotPlayerControllerSwitch hands this controller a player.
+
+
+## Translates a generic intent into this controller's own command, and ticks once.
+## [DotPlayerIntent] is what every controller agrees on (move, look, buttons); the extras of this movement model keep their defaults.
+## A game that only uses this controller should keep calling [method apply_command] and [method simulate_tick].
+func _apply_intent(intent: DotPlayerIntent, delta: float) -> void:
+	if intent == null:
+		return
+
+	var command := DotFpsCommand.new()
+	command.move = intent.move
+	command.yaw = intent.view_yaw
+	command.pitch = intent.view_pitch
+	command.set_button(DotFpsCommand.BUTTON_JUMP, intent.holding(DotPlayerIntent.Btn.JUMP))
+	command.set_button(DotFpsCommand.BUTTON_CROUCH, intent.holding(DotPlayerIntent.Btn.CROUCH))
+	command.set_button(DotFpsCommand.BUTTON_SPRINT, intent.holding(DotPlayerIntent.Btn.SPRINT))
+	command.set_button(DotFpsCommand.BUTTON_WALK, intent.holding(DotPlayerIntent.Btn.WALK))
+
+	apply_command(command)
+	simulate_tick(_tick, delta)
+	_tick += 1
+
+
+## The state's angles are degrees and everything on the base is radians.
+## Every override below converts; a handover to a third-person controller would otherwise rotate the player by a factor of 57.
+func _read_transform() -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, deg_to_rad(state.yaw)), state.position)
+
+
+func _write_transform(to: Transform3D) -> void:
+	teleport(to.origin, rad_to_deg(to.basis.get_euler().y))
+
+
+func _read_velocity() -> Vector3:
+	return state.velocity
+
+
+func _write_velocity(v: Vector3) -> void:
+	state.velocity = v
+
+
+func _read_yaw() -> float:
+	return deg_to_rad(state.yaw)
+
+
+func _read_pitch() -> float:
+	return deg_to_rad(state.pitch)
+
+
+func _write_angles(yaw: float, pitch: float) -> void:
+	state.yaw = rad_to_deg(yaw)
+	state.pitch = clampf(rad_to_deg(pitch), tunables.pitch_min, tunables.pitch_max)
+
+
+## Where the camera is, which is not where the feet are: the base default is the capsule origin, at the knees.
+## The height comes from the motor's `eye_position`, which accounts for the current stance, not from `stand_height`.
+func eye_transform() -> Transform3D:
+	var height := (
+		motor.eye_position(state).y - state.position.y if motor != null
+		else tunables.stand_height - tunables.radius * 0.5
+	)
+
+	return Transform3D(
+		Basis(Vector3.UP, deg_to_rad(state.yaw))
+		* Basis(Vector3.RIGHT, deg_to_rad(state.pitch)),
+		state.position + Vector3.UP * height
+	)
+
+
+## The motion description an animation driver wants, without it importing this addon.
+func motion() -> Dictionary:
+	return {
+		"speed": Vector2(state.velocity.x, state.velocity.z).length(),
+		"vertical": state.velocity.y,
+		"on_floor": state.mode == DotFpsState.Mode.GROUND,
+		# `crouch_fraction`, not the held flag: a player who released crouch under a low
+		# ceiling is no longer holding it and is still crouched, and an animation driver
+		# reading the flag would stand them up inside the ceiling.
+		"crouched": state.crouch_fraction > 0.5,
+		"sliding": state.is_sliding(),
+		"sprinting": state.sprinting,
+		"sprint_blocks_aim": tunables != null and tunables.sprint_blocks_aim,
+		"sprint_blocks_fire": tunables != null and not tunables.sprint_can_shoot,
+		"sprint_shot_follows_barrel": tunables != null and tunables.sprint_shot_follows_barrel,
+		"facing": deg_to_rad(state.yaw),
+	}

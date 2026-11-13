@@ -1,0 +1,22 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"baseball_bat"
+label = "Baseball bat"
+category = "melee"
+damage_hp = 15.0
+reach_tiles = 1.25
+arc_degrees = 90.0
+windup_s = 0.25
+active_s = 0.1
+recovery_s = 0.65
+endurance_cost = 10.0
+noise_radius_tiles = 4.0
+attack_clip = "bat_attack"
+held_mesh_id = "baseball_bat"
+draw_s = 0.4
+ads_move_scale = 0.9
+source_note = "Damage: ARCHITECTURE legacy 15 HP. Reach: PZ MaxRange 1.25. Timing: bat_attack clip 1.0 s with AttackCollisionCheck at 0.25 (docs/pz-reference.md), so windup+active+recovery = clip length. Arc 90 deg and cost 10 are proposed defaults pending playtest. Handling (2026-11-10, ours, in proportion to apex-study counterparts none): draw 0.4s, ADS n/as at x0.9 move."

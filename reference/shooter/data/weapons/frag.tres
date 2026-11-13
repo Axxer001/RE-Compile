@@ -1,0 +1,17 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"frag"
+label = "Frag grenade"
+category = "throwable"
+damage_kind = "blast"
+damage_hp = 0.0
+endurance_cost = 10.0
+noise_radius_tiles = 14.0
+range_tiles = 10.0
+attack_clip = "throw"
+held_mesh_id = ""
+source_note = "Range 10: PZ PipeBomb throw range. Fused blast arrives in T24. PZ has no PipeBomb mesh, so no held mesh (placeholder in flight). Max stack 3, cost 10 proposed."

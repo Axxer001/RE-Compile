@@ -1,0 +1,12 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/item_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"backpack"
+label = "Backpack"
+category = "bag"
+icon_id = "backpack"
+max_stack = 1
+weight_kg = 0.0

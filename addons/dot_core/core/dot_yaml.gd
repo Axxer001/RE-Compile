@@ -1,0 +1,512 @@
+class_name DotYaml
+extends RefCounted
+
+## A YAML reader for configuration files, and nothing more: a deliberately small subset that refuses everything else.
+## Supported: comments, quoted or bare scalars, ints, floats, bools, nested maps, sequences, one-line flow sequences.
+## Refused with a line number: tabs, bad indent, duplicate keys, anchors, aliases, tags, block scalars, flow mappings.
+
+# No log channel: a parser that returns a DotResult naming the line it refused. Every
+# caller (TmcConfig, TmcContent, install_games) wraps that with the file's path and
+# returns it, and the host says why it did not start; a line here would say it twice.
+
+## Longest line accepted, in characters.
+## Bounded because a config is read before anything has decided to trust it.
+const MAX_LINE := 4096
+
+## Deepest nesting accepted.
+## The parser is recursive; a hostile file should error, not overflow the stack.
+const MAX_DEPTH := 8
+
+
+## Parses YAML text into a [Dictionary].
+##
+## Returns a [DotResult] whose value is the top-level map, or a failure naming the line.
+static func parse(text: String, source: String = "<string>") -> DotResult:
+	var lines: Variant = _prepare(text, source)
+
+	if lines is DotResult:
+		return lines
+
+	var rows: Array = lines
+	var cursor := [0]
+	var parsed := _parse_block(rows, cursor, 0, source, 0)
+
+	if not parsed.ok:
+		return parsed
+
+	if cursor[0] < rows.size():
+		var row: Dictionary = rows[cursor[0]]
+		return _fail(source, int(row["line"]), "unexpected indentation")
+
+	var value: Variant = parsed.value
+	return DotResult.success(value if value is Dictionary else {})
+
+
+## Parses a file. A missing file is a failure, not an empty map.
+## Collapsing the two would make a path typo look like a config that sets nothing.
+static func parse_file(path: String) -> DotResult:
+	if not FileAccess.file_exists(path):
+		return DotResult.fail(
+			DotError.CODE_IO, "No such file: %s" % path
+		)
+
+	var file := FileAccess.open(path, FileAccess.READ)
+
+	if file == null:
+		return DotResult.fail(
+			DotError.CODE_IO,
+			"Could not read %s." % path,
+			error_string(FileAccess.get_open_error())
+		)
+
+	var text := file.get_as_text()
+	file.close()
+	return parse(text, path)
+
+
+
+## Strips comments and blank lines, and measures each remaining line's indent.
+## Returns rows or a [DotResult] failure. A tab in the indent is refused: editors disagree on its width.
+static func _prepare(text: String, source: String) -> Variant:
+	var rows: Array = []
+	var number := 0
+
+	for raw in text.split("\n"):
+		number += 1
+		var line := (raw as String).trim_suffix("\r")
+
+		if line.length() > MAX_LINE:
+			return _fail(source, number, "line is longer than %d characters" % MAX_LINE)
+
+		var stripped := line.strip_edges()
+
+		if stripped == "" or stripped.begins_with("#"):
+			continue
+
+		if stripped == "---" or stripped == "...":
+			return _fail(
+				source, number,
+				"document markers are not supported; this reader takes one document"
+			)
+
+		var indent := 0
+
+		while indent < line.length() and line[indent] == " ":
+			indent += 1
+
+		if indent < line.length() and line[indent] == "\t":
+			return _fail(
+				source, number,
+				"tabs may not indent YAML; use spaces"
+			)
+
+		rows.append({
+			"line": number,
+			"indent": indent,
+			"text": _strip_comment(stripped),
+		})
+
+	return rows
+
+
+## Removes a trailing comment, respecting quotes: a `#` inside a quoted string is data.
+## Whether a quote at [param index] starts a quoted scalar: only at a value start, so the apostrophe in `Bob's map # c` is text.
+static func _opens_quote(text: String, index: int) -> bool:
+	return index == 0 or " \t[{,:".contains(text[index - 1])
+
+
+static func _strip_comment(text: String) -> String:
+	var quote := ""
+	var index := 0
+
+	while index < text.length():
+		var ch := text[index]
+
+		if quote != "":
+			if ch == "\\" and quote == "\"":
+				index += 2
+				continue
+			if ch == quote:
+				quote = ""
+		elif (ch == "\"" or ch == "'") and _opens_quote(text, index):
+			quote = ch
+		elif ch == "#" and (index == 0 or text[index - 1] == " " or text[index - 1] == "\t"):
+			return text.substr(0, index).strip_edges()
+
+		index += 1
+
+	return text.strip_edges()
+
+
+
+## Parses one indented block: a map, or a sequence.
+## [param cursor] is a one-element [Array] used as a shared mutable index across the recursion.
+static func _parse_block(
+	rows: Array,
+	cursor: Array,
+	indent: int,
+	source: String,
+	depth: int
+) -> DotResult:
+	if depth > MAX_DEPTH:
+		return _fail(source, _line_at(rows, cursor), "nested deeper than %d" % MAX_DEPTH)
+
+	if cursor[0] >= rows.size():
+		return DotResult.success({})
+
+	var first: Dictionary = rows[cursor[0]]
+
+	if String(first["text"]).begins_with("- "):
+		return _parse_sequence(rows, cursor, indent, source, depth)
+
+	return _parse_map(rows, cursor, indent, source, depth)
+
+
+static func _parse_map(
+	rows: Array,
+	cursor: Array,
+	indent: int,
+	source: String,
+	depth: int
+) -> DotResult:
+	var out := {}
+
+	while cursor[0] < rows.size():
+		var row: Dictionary = rows[cursor[0]]
+		var row_indent := int(row["indent"])
+
+		if row_indent < indent:
+			break
+
+		if row_indent > indent:
+			return _fail(source, int(row["line"]), "unexpected indentation")
+
+		var text := String(row["text"])
+
+		if text.begins_with("- "):
+			# A sequence entry where a mapping key was expected. Legal YAML in some
+			# positions and never what a config file means here.
+			return _fail(source, int(row["line"]), "expected a key, found a list item")
+
+		var split := _split_key(text)
+
+		if split.is_empty():
+			return _fail(
+				source, int(row["line"]),
+				"expected 'key: value', found '%s'" % text
+			)
+
+		var key := String(split["key"])
+		var rest := String(split["value"])
+
+		if out.has(key):
+			# Refused rather than overwritten. YAML says the last one wins, which means a
+			# duplicated key silently discards the one an operator meant to edit — and the
+			# two are usually far enough apart in the file that nobody sees both.
+			return _fail(source, int(row["line"]), "duplicate key '%s'" % key)
+
+		cursor[0] += 1
+
+		if rest != "":
+			var scalar: Variant = _parse_scalar(rest, source, int(row["line"]))
+
+			if scalar is DotResult:
+				return scalar
+
+			out[key] = scalar
+			continue
+
+		# Nothing after the colon: either a nested block, or an empty value.
+		var child_indent := _next_indent(rows, cursor)
+
+		# A list may sit at the key's own indent (`maps:` then `- a` underneath, unindented),
+		# which is valid YAML and what most people write.
+		var flush_list: bool = child_indent == indent and cursor[0] < rows.size() \
+			and String(rows[cursor[0]]["text"]).begins_with("- ")
+
+		if child_indent > indent or flush_list:
+			var child := _parse_block(rows, cursor, child_indent, source, depth + 1)
+
+			if not child.ok:
+				return child
+
+			out[key] = child.value
+		else:
+			out[key] = ""
+
+	return DotResult.success(out)
+
+
+static func _parse_sequence(
+	rows: Array,
+	cursor: Array,
+	indent: int,
+	source: String,
+	depth: int
+) -> DotResult:
+	var out: Array = []
+
+	while cursor[0] < rows.size():
+		var row: Dictionary = rows[cursor[0]]
+		var row_indent := int(row["indent"])
+
+		if row_indent < indent:
+			break
+
+		if row_indent > indent:
+			return _fail(source, int(row["line"]), "unexpected indentation")
+
+		var text := String(row["text"])
+
+		if not text.begins_with("- "):
+			if text == "-":
+				return _fail(
+					source, int(row["line"]), "a list item needs a value on the same line"
+				)
+			break
+
+		var body := text.substr(2).strip_edges()
+		cursor[0] += 1
+
+		# `- key: value` starts a map at the item's own indent. Handled by rewriting the
+		# row in place rather than by a second parser: the alternative is two code paths
+		# for a mapping and they drift.
+		var inner := _split_key(body)
+
+		if not inner.is_empty() and not _looks_quoted(body):
+			var item_indent := indent + 2
+			rows[cursor[0] - 1] = {
+				"line": row["line"], "indent": item_indent, "text": body,
+			}
+			cursor[0] -= 1
+
+			var mapped := _parse_map(rows, cursor, item_indent, source, depth + 1)
+
+			if not mapped.ok:
+				return mapped
+
+			out.append(mapped.value)
+			continue
+
+		var scalar: Variant = _parse_scalar(body, source, int(row["line"]))
+
+		if scalar is DotResult:
+			return scalar
+
+		out.append(scalar)
+
+	return DotResult.success(out)
+
+
+## Splits `key: value` at the first colon outside quotes. Empty when there is none.
+static func _split_key(text: String) -> Dictionary:
+	var quote := ""
+	var index := 0
+
+	while index < text.length():
+		var ch := text[index]
+
+		if quote != "":
+			if ch == "\\" and quote == "\"":
+				index += 2
+				continue
+			if ch == quote:
+				quote = ""
+		elif ch == "\"" or ch == "'":
+			quote = ch
+		elif ch == ":":
+			# A colon inside a bare scalar — a URL's `http://` — is only a key separator
+			# when a space or the end of the line follows it. That is YAML's own rule and
+			# it is the one that makes `url: http://host:8000` parse.
+			if index + 1 >= text.length() or text[index + 1] == " ":
+				return {
+					"key": _unquote(text.substr(0, index).strip_edges()),
+					"value": text.substr(index + 1).strip_edges(),
+				}
+
+		index += 1
+
+	return {}
+
+
+static func _looks_quoted(text: String) -> bool:
+	return text.begins_with("\"") or text.begins_with("'")
+
+
+static func _next_indent(rows: Array, cursor: Array) -> int:
+	if cursor[0] >= rows.size():
+		return -1
+
+	return int((rows[cursor[0]] as Dictionary)["indent"])
+
+
+static func _line_at(rows: Array, cursor: Array) -> int:
+	if cursor[0] >= rows.size():
+		return 0
+
+	return int((rows[cursor[0]] as Dictionary)["line"])
+
+
+
+## Turns a scalar into a typed value, or returns a [DotResult] failure.
+## Inference is deliberately narrow: a quoted value is always a string (`country: "NO"`).
+static func _parse_scalar(text: String, source: String, line: int) -> Variant:
+	if text == "":
+		return ""
+
+	for prefix in ["&", "*", "!", "|", ">"]:
+		if text.begins_with(prefix):
+			return _fail(
+				source, line,
+				"anchors, aliases, tags and block scalars are not supported ('%s')" % text
+			)
+
+	if text.begins_with("{"):
+		return _fail(
+			source, line,
+			"an inline mapping is not supported; indent it on the following lines"
+		)
+
+	if text.begins_with("["):
+		return _parse_flow_sequence(text, source, line)
+
+	if _looks_quoted(text):
+		return _unquote(text)
+
+	var lowered := text.to_lower()
+
+	if lowered in ["true", "yes", "on"]:
+		return true
+
+	if lowered in ["false", "no", "off"]:
+		return false
+
+	if lowered in ["null", "~"]:
+		return ""
+
+	if text.is_valid_int():
+		return text.to_int()
+
+	if text.is_valid_float():
+		return text.to_float()
+
+	return text
+
+
+## `[a, b, c]` on one line. Scalars only.
+static func _parse_flow_sequence(text: String, source: String, line: int) -> Variant:
+	if not text.ends_with("]"):
+		return _fail(source, line, "a flow sequence must close on the same line")
+
+	var body := text.substr(1, text.length() - 2).strip_edges()
+	var out: Array = []
+
+	if body == "":
+		return out
+
+	for part in _split_flow(body):
+		var value: Variant = _parse_scalar(String(part).strip_edges(), source, line)
+
+		if value is DotResult:
+			return value
+
+		out.append(value)
+
+	return out
+
+
+## Splits on commas outside quotes.
+static func _split_flow(text: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var quote := ""
+	var start := 0
+	var index := 0
+
+	while index < text.length():
+		var ch := text[index]
+
+		if quote != "":
+			if ch == quote:
+				quote = ""
+		elif ch == "\"" or ch == "'":
+			quote = ch
+		elif ch == ",":
+			out.append(text.substr(start, index - start))
+			start = index + 1
+
+		index += 1
+
+	out.append(text.substr(start))
+	return out
+
+
+static func _unquote(text: String) -> String:
+	if text.length() >= 2:
+		if text.begins_with("\"") and text.ends_with("\""):
+			return text.substr(1, text.length() - 2) \
+				.replace("\\\"", "\"").replace("\\\\", "\\").replace("\\n", "\n")
+
+		if text.begins_with("'") and text.ends_with("'"):
+			return text.substr(1, text.length() - 2).replace("''", "'")
+
+	return text
+
+
+static func _fail(source: String, line: int, why: String) -> DotResult:
+	return DotResult.fail(
+		DotError.CODE_PARSE,
+		"%s:%d: %s" % [source, line, why]
+	)
+
+
+
+## Fetches a nested value by a dotted path. Missing returns [param fallback].
+## One line instead of a chain of `has()` checks.
+static func at(tree: Dictionary, path: String, fallback: Variant = null) -> Variant:
+	var node: Variant = tree
+
+	for part in path.split("."):
+		if not (node is Dictionary) or not (node as Dictionary).has(part):
+			return fallback
+
+		node = (node as Dictionary)[part]
+
+	return node
+
+
+
+## yml text for [param tree] (nested mappings, scalars, flat lists of scalars), or null when a value
+## is anything else. Strings are always double-quoted so the reader gives back the same type.
+static func emit(tree: Dictionary, depth: int = 0) -> Variant:
+	var out := ""
+	var pad := "  ".repeat(depth)
+	for k in tree:
+		var v: Variant = tree[k]
+		if v is Dictionary:
+			var inner: Variant = emit(v, depth + 1)
+			if inner == null:
+				return null
+			out += "%s%s:\n%s" % [pad, k, inner]
+			continue
+		var s: Variant = _emit_scalar(v)
+		if s == null:
+			return null
+		out += "%s%s: %s\n" % [pad, k, s]
+	return out
+
+
+static func _emit_scalar(v: Variant) -> Variant:
+	if v is Array:
+		var parts := PackedStringArray()
+		for e in v:
+			if e is Array or e is Dictionary:
+				return null
+			parts.append(_emit_scalar(e))
+		return "[" + ", ".join(parts) + "]"
+	if v is bool or v is int:
+		return str(v)
+	if v is float:
+		return str(v) if str(v).contains(".") or str(v).contains("e") else str(v) + ".0"
+	if v is String or v is StringName:
+		return "\"" + String(v).replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+	return null

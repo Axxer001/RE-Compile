@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/weapon_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = "katana"
+display_name = "Steel Katana"
+category = 0
+# PZ-extracted: Sword MinDmg=2.0 MaxDmg=3.0 ×16.7 → 33–50 HP; SwingTime=3.0s; MaxRange=1.4
+damage = 42.0
+knockback_force = 6.0
+stun_duration = 0.4
+stamina_cost = 28.0
+attack_duration = 0.4
+attack_cooldown = 3.0
+reach = 1.4
+noise_radius = 5.0
+mesh_path = "res://assets/weapons/tool-pickaxe.glb"
+mesh_scale = Vector3(0.8, 0.8, 0.8)
+mesh_rotation_degrees = Vector3(0, 45, -30)
+mesh_offset = Vector3(0, 0.05, -0.25)
+preview_color = Color(0.95, 0.95, 1.0, 1)

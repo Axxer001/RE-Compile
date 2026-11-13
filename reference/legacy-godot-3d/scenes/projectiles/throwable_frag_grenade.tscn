@@ -1,0 +1,31 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/throwable_frag_grenade.gd" id="1_script"]
+
+[sub_resource type="PhysicsMaterial" id="PhysMat_Grenade"]
+bounce = 0.45
+friction = 0.65
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_Body"]
+radius = 0.15
+
+[sub_resource type="StandardMaterial3D" id="Mat_Grenade"]
+albedo_color = Color(0.2, 0.35, 0.2, 1)
+roughness = 0.4
+
+[sub_resource type="SphereMesh" id="SphereMesh_Vis"]
+material = SubResource("Mat_Grenade")
+radius = 0.15
+height = 0.3
+
+[node name="ThrowableFragGrenade" type="RigidBody3D"]
+collision_layer = 0
+collision_mask = 1
+physics_material_override = SubResource("PhysMat_Grenade")
+script = ExtResource("1_script")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("SphereShape3D_Body")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_Vis")

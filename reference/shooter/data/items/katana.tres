@@ -1,0 +1,14 @@
+[gd_resource type="Resource" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/item_definition.gd" id="1"]
+[ext_resource type="Resource" path="res://data/weapons/katana.tres" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = &"katana"
+label = "Katana"
+category = "weapon"
+icon_id = "katana"
+max_stack = 1
+weapon = ExtResource("2")
+weight_kg = 1.2

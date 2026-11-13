@@ -1,0 +1,89 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_script"]
+[ext_resource type="Script" path="res://scripts/hitbox_3d.gd" id="2_hitbox"]
+[ext_resource type="PackedScene" path="res://assets/characters/character_base.fbx" id="3_mesh"]
+[ext_resource type="Texture2D" path="res://assets/characters/humanFemaleA.png" id="4_tex"]
+[ext_resource type="AnimationLibrary" path="res://assets/animations/player/player_animation_library.res" id="5_anim_lib"]
+[ext_resource type="AnimationNodeStateMachine" path="res://assets/animations/player/player_state_machine.res" id="6_state_machine"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_Female"]
+radius = 0.32
+height = 1.62
+
+[sub_resource type="StandardMaterial3D" id="Mat_SkinFemale"]
+albedo_texture = ExtResource("4_tex")
+roughness = 0.8
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_Melee"]
+size = Vector3(1.2, 1.2, 1.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_Shove"]
+size = Vector3(1.8, 1.2, 1.8)
+
+[node name="PlayerFemale" type="CharacterBody3D"]
+collision_layer = 2
+collision_mask = 5
+script = ExtResource("1_script")
+walk_speed = 4.8
+sprint_speed = 8.0
+max_stamina = 110.0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.81, 0)
+shape = SubResource("CapsuleShape3D_Female")
+
+[node name="ModelRoot" type="Node3D" parent="."]
+transform = Transform3D(0.9, 0, 0, 0, 0.9, 0, 0, 0, 0.9, 0, 0, 0)
+
+[node name="CharacterMesh" parent="ModelRoot" instance=ExtResource("3_mesh")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+libraries = {
+"": ExtResource("5_anim_lib")
+}
+
+[node name="AnimationTree" type="AnimationTree" parent="."]
+tree_root = ExtResource("6_state_machine")
+anim_player = NodePath("../AnimationPlayer")
+
+[node name="FlashlightPivot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.05, 0)
+
+[node name="Flashlight" type="SpotLight3D" parent="FlashlightPivot"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.22, 0, -0.38)
+light_color = Color(1, 0.96, 0.85, 1)
+light_energy = 3.5
+shadow_enabled = true
+spot_range = 16.0
+spot_angle = 32.0
+spot_angle_attenuation = 1.4
+
+[node name="MeleeHitbox" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, -0.9)
+collision_layer = 8
+collision_mask = 16
+script = ExtResource("2_hitbox")
+damage = 22.0
+knockback_force = 3.8
+stun_duration = 0.35
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="MeleeHitbox"]
+shape = SubResource("BoxShape3D_Melee")
+
+[node name="ShoveHitbox" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, -1.0)
+collision_layer = 8
+collision_mask = 16
+script = ExtResource("2_hitbox")
+damage = 5.0
+knockback_force = 11.5
+stun_duration = 1.0
+is_shove = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="ShoveHitbox"]
+shape = SubResource("BoxShape3D_Shove")
+
+[node name="ProjectileSpawn" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.22, 0.9, -0.55)

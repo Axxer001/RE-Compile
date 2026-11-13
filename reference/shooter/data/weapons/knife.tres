@@ -1,0 +1,22 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"knife"
+label = "Hunting knife"
+category = "melee"
+damage_hp = 18.0
+reach_tiles = 0.9
+arc_degrees = 60.0
+windup_s = 0.21
+active_s = 0.08
+recovery_s = 0.543333
+endurance_cost = 6.0
+noise_radius_tiles = 2.0
+attack_clip = "stab"
+held_mesh_id = "knife"
+draw_s = 0.2
+ads_move_scale = 1.0
+source_note = "Damage: ARCHITECTURE legacy 18 HP. Reach: PZ KitchenKnife MaxRange 0.9. Timing: stab clip 0.8333 s (PZ knife anim Stab), commit at the 0.25 hit fraction; windup+active+recovery = clip length. Arc 60, cost 6, noise 2 proposed: quick and quiet. Handling (2026-11-10, ours, in proportion to apex-study counterparts none): draw 0.2s, ADS n/as at x1.0 move."

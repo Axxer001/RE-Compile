@@ -1,0 +1,903 @@
+{
+ "scorch_and_burn": {
+  "topic": "C++ Intro: your first program (#include, main, return 0)",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Scorch and Burn: the fireball flies!\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"A spark leaves your hand.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Flames answer the call.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"The first page of the grimoire is open.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Burn marks the ground where it lands.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Fireball ready.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Heat gathers in your palm.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"The scorch spreads three and a half metres.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   }
+  ]
+ },
+ "cultivate": {
+  "topic": "C++ Get Started: program layout; execution starts in main()",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Cultivate: focus gathers.\";",
+     "  cout << \"Power, mastery and speed rise.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Breathe in.\";",
+     "  cout << \"Breathe out.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"The program starts here, inside main.\";",
+     "  cout << \"Then it ends.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"First line of the ritual.\";",
+     "  cout << \"Second line of the ritual.\";",
+     "  cout << \"Third line of the ritual.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Your magic grows stronger.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Ten seconds of focus.\";",
+     "  cout << \"Focus fades.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Attack speed rises.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"The aura glows in your hands.\";",
+     "  cout << \"The aura dims.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   }
+  ]
+ },
+ "ring_of_fire": {
+  "topic": "C++ Syntax: statements end with ;, code lives in { } blocks, using namespace std",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Ring of Fire: six orbs circle you.\";",
+     "  cout << \"They burn whatever they touch.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "int main() {",
+     "  std::cout << \"No using line: std:: names the library.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  {",
+     "    cout << \"An inner block.\";",
+     "  }",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"One statement, one semicolon.\";",
+     "  cout << \"Another statement, another semicolon.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "int main() {",
+     "  std::cout << \"Orbit begins.\";",
+     "  std::cout << \"Orbit ends.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  {",
+     "    cout << \"First orb.\";",
+     "  }",
+     "  {",
+     "    cout << \"Second orb.\";",
+     "  }",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Blocks open with { and close with }.\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"The ring follows you.\";",
+     "  {",
+     "    cout << \"It slows the burning.\";",
+     "  }",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   }
+  ]
+ },
+ "quick_step": {
+  "topic": "C++ Output: cout <<, chained output, endl and \\n",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Quick Step!\" << endl;",
+     "  cout << \"Five metres in a blink.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Left, right, \";",
+     "  cout << \"forward.\\n\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Blink \" << \"and \" << \"gone.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Line one\" << endl;",
+     "  cout << \"Line two\" << endl;",
+     "  cout << \"Line three\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Step\\n\";",
+     "  cout << \"Step again\\n\";",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Cooldown: \" << \"ten seconds\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"No key held: \" << endl << \"step forward.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"Diagonal steps go the same distance.\\n\";",
+     "  cout << \"Ready.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   }
+  ]
+ },
+ "sage_arts": {
+  "topic": "C++ Comments: // single-line and /* multi-line */ notes the compiler skips",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  // Out of combat: restore a little HP and MP.",
+     "  cout << \"Sage Arts: you rest.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  /* Sage Arts waits three seconds",
+     "     after the last hit. */",
+     "  cout << \"Resting.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"HP returns.\" << endl; // three percent a second",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  // cout << \"This line never runs.\";",
+     "  cout << \"Only this line runs.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  /* A block comment can span */",
+     "  /* or close on the same line. */",
+     "  cout << \"Calm.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  cout << \"MP returns.\" << endl; // five percent a second",
+     "  // At full HP and MP, the passive rests.",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  // Grace: any hit resets the wait.",
+     "  cout << \"Waiting...\" << endl;",
+     "  cout << \"Restoring.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  /* Notes for the reader,",
+     "     ignored by the compiler. */",
+     "  cout << \"The sage is quiet.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   }
+  ]
+ },
+ "dragons_breath": {
+  "topic": "C++ Variables: type name = value; and const for values that never change",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int ticks = 10;",
+     "  double power = 0.8;",
+     "  cout << \"Breath ticks: \" << ticks << endl;",
+     "  cout << \"Power per tick: \" << power << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  const int SECONDS = 5;",
+     "  cout << \"The breath lasts \" << SECONDS << \" seconds.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "#include <string>",
+     "using namespace std;",
+     "int main() {",
+     "  string name = \"Dragon's Breath\";",
+     "  cout << name << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      0,
+      1
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int length = 20;",
+     "  int width = 5;",
+     "  cout << length << \" m long, \" << width << \" m wide\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int mp = 50;",
+     "  mp = mp - 50;",
+     "  cout << \"MP left: \" << mp << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  double tick = 0.5;",
+     "  int count = 10;",
+     "  cout << tick * count << \" seconds of fire\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  const double BURN = 5.0;",
+     "  cout << \"Burn: \" << BURN << \" s\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int hits = 0;",
+     "  hits = hits + 1;",
+     "  hits = hits + 1;",
+     "  cout << \"Hits: \" << hits << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   }
+  ]
+ },
+ "firefly": {
+  "topic": "C++ User Input: cin >> reads a value into a declared variable",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int targets;",
+     "  cout << \"How many targets? \";",
+     "  cin >> targets;",
+     "  cout << 30 / targets << \" missiles each\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int missiles;",
+     "  cout << \"Missiles: \";",
+     "  cin >> missiles;",
+     "  cout << \"Launching \" << missiles << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "#include <string>",
+     "using namespace std;",
+     "int main() {",
+     "  string target;",
+     "  cout << \"Lock on to: \";",
+     "  cin >> target;",
+     "  cout << \"Locked: \" << target << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      0,
+      1
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  double range;",
+     "  cout << \"Range in metres: \";",
+     "  cin >> range;",
+     "  cout << \"Range set to \" << range << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int a;",
+     "  int b;",
+     "  cout << \"Two numbers: \";",
+     "  cin >> a >> b;",
+     "  cout << a + b << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int mp;",
+     "  cout << \"Your MP: \";",
+     "  cin >> mp;",
+     "  cout << \"After Firefly: \" << mp - 70 << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int seconds;",
+     "  cin >> seconds;",
+     "  cout << \"Cooldown \" << seconds << \" s\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "#include <string>",
+     "using namespace std;",
+     "int main() {",
+     "  string name;",
+     "  cout << \"Name your spell: \";",
+     "  cin >> name;",
+     "  cout << name << \" is ready.\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      0,
+      1
+     ]
+    ]
+   }
+  ]
+ },
+ "explosion": {
+  "topic": "C++ Data Types: int, float, double, bool, char, string and auto",
+  "variants": [
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int damage = 1000;",
+     "  double radius = 25.0;",
+     "  bool charged = true;",
+     "  cout << damage << \" \" << radius << \" \" << charged << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4,
+      5
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  char grade = 'E';",
+     "  cout << \"Rank \" << grade << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  float seconds = 20.0f;",
+     "  cout << \"Charge: \" << seconds << \" s\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "#include <string>",
+     "using namespace std;",
+     "int main() {",
+     "  string spell = \"Explosion\";",
+     "  bool ready = false;",
+     "  cout << spell << \" ready: \" << ready << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      0,
+      1
+     ],
+     [
+      4,
+      5
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  auto metres = 80;",
+     "  cout << \"Reach: \" << metres << \" m\" << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": []
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  int whole = 7;",
+     "  double precise = 7.25;",
+     "  cout << whole << \" and \" << precise << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  bool broken = false;",
+     "  char mark = '!';",
+     "  cout << broken << mark << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "lines": [
+     "#include <iostream>",
+     "using namespace std;",
+     "int main() {",
+     "  auto power = 10.0;",
+     "  auto count = 1;",
+     "  cout << power * count << endl;",
+     "  return 0;",
+     "}"
+    ],
+    "swap": [
+     [
+      3,
+      4
+     ]
+    ]
+   }
+  ]
+ }
+}

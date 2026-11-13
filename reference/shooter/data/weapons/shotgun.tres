@@ -1,0 +1,37 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"shotgun"
+label = "Pump shotgun"
+category = "ranged"
+damage_kind = "bullet"
+damage_hp = 18.0
+reach_tiles = 0.0
+arc_degrees = 0.0
+windup_s = 0.05
+active_s = 0.05
+recovery_s = 0.8
+endurance_cost = 0.0
+noise_radius_tiles = 18.0
+magazine_size = 6
+ammo_type = "ammo_shells"
+range_tiles = 12.0
+pellets = 6
+spread_deg = 24.0
+fire_mode = "semi"
+reload_s = 2.4
+reload_clip = "shotgun_reload"
+aim_clip = "rifle_aim"
+attack_clip = "shotgun_fire"
+held_mesh_id = "shotgun"
+reload_empty_s = 2.4
+draw_s = 0.5
+ads_s = 0.24
+ads_move_scale = 0.85
+headshot_mult = 1.0
+spread_hip_deg = 0.0
+spread_ads_deg = 0.0
+source_note = "18 HP per pellet, 6 pellets, 6 shells: ARCHITECTURE/manifest (PZ: 5 shells, 9 pellets). One shell per shot. Range 12: PZ MaxRange. Spread 24 deg, 0.9 s pump interval, 2.4 s reload, noise 18 proposed (PZ SoundRadius 200 = 2x pistol). Handling (2026-11-10, ours, in proportion to apex-study counterparts Mastiff 0.5/0.22/x0.9): draw 0.5s, ADS 0.24s at x0.85 move, head x1.0, hip spread 0.0 deg, empty reload 2.4s."

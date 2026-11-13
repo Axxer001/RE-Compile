@@ -1,0 +1,22 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/weapon_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"katana"
+label = "Katana"
+category = "melee"
+damage_hp = 42.0
+reach_tiles = 1.4
+arc_degrees = 100.0
+windup_s = 0.25
+active_s = 0.12
+recovery_s = 0.63
+endurance_cost = 18.0
+noise_radius_tiles = 3.5
+attack_clip = "bat_attack_b"
+held_mesh_id = "katana"
+draw_s = 0.45
+ads_move_scale = 0.9
+source_note = "Damage: ARCHITECTURE legacy 42 HP (PZ 8.0 capped, docs/pz-reference.md). Reach: PZ Katana MaxRange 1.4. Timing: bat_attack_b clip 1.0 s, commit at 0.25, longer active window. Arc 100, cost 18, noise 3.5 proposed: strong, tiring. Handling (2026-11-10, ours, in proportion to apex-study counterparts none): draw 0.45s, ADS n/as at x0.9 move."

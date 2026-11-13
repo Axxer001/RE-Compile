@@ -1,0 +1,18 @@
+Creative Commons Zero v1.0 Universal (CC0 1.0)
+Public Domain Dedication
+
+This work is dedicated to the public domain.
+
+To the extent possible under law, the author has waived all copyright
+and related or neighboring rights to this work.
+
+You are free to:
+  - Use commercially or non-commercially
+  - Modify and adapt
+  - Distribute and redistribute
+  - Include in any project without attribution
+
+No permission is required. No credit is required.
+Attribution is appreciated but never obligatory.
+
+Full legal text: https://creativecommons.org/publicdomain/zero/1.0/

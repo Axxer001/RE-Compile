@@ -1,0 +1,286 @@
+class_name DotRotationSpec
+extends RefCounted
+
+## What an operator's rotation file says, and the one matcher turning entries into ids, shared by maps.yml and games.yml.
+## A candidate is `{"id", "ref"}`; an entry is a string or a mapping with settings ([method settings_for]).
+## A plain list under [param list_key] is rotation `main`; if `rotations: main` also exists, that wins with a warning.
+
+const MAIN := "main"
+const MODES := ["random", "cycle"]
+const PATTERN_KEYS := ["entry", "map", "id", "name", "game"]
+
+
+## One file section, normalised. The value is the spec Dictionary above; [param warnings]
+## collects what the caller should log.
+static func normalize(section: Dictionary, list_key: String, warnings: PackedStringArray, where: String = "") -> Dictionary:
+	var spec := {"rotation": "", "mode": "", "cooldown": -1, "rotations": {}, "commands": {"names": {}}}
+	if section.has("commands"):
+		spec["commands"] = _commands(section["commands"], warnings, where)
+	if section.has("rotation"):
+		spec["rotation"] = str(section["rotation"]).strip_edges()
+	if section.has("mode"):
+		spec["mode"] = _mode(section["mode"], warnings, where)
+	if section.has("cooldown"):
+		spec["cooldown"] = maxi(int(section["cooldown"]), 0)
+
+	var named: Variant = section.get("rotations", {})
+	if named is Dictionary:
+		for key: Variant in (named as Dictionary):
+			var body: Variant = (named as Dictionary)[key]
+			var rot := {"mode": "", "cooldown": -1, "entries": PackedStringArray(), "settings": {}}
+			if body is Dictionary:
+				var b := body as Dictionary
+				if b.has("mode"):
+					rot["mode"] = _mode(b["mode"], warnings, where)
+				if b.has("cooldown"):
+					rot["cooldown"] = maxi(int(b["cooldown"]), 0)
+				_fill(rot, b.get(list_key, []), warnings, where)
+			elif body is Array:
+				_fill(rot, body, warnings, where)
+			(spec["rotations"] as Dictionary)[str(key)] = rot
+	elif section.has("rotations"):
+		warnings.append("%srotations: must be a map of names to lists" % _at(where))
+
+	if section.has(list_key):
+		var shorthand := {"mode": "", "cooldown": -1, "entries": PackedStringArray(), "settings": {}}
+		_fill(shorthand, section[list_key], warnings, where)
+		if (spec["rotations"] as Dictionary).has(MAIN):
+			warnings.append("%s%s: and rotations: main are both set; rotations: main wins" % [_at(where), list_key])
+		else:
+			(spec["rotations"] as Dictionary)[MAIN] = shorthand
+	return spec
+
+
+## Layers specs, weakest first. Scalars override; a rotation of the same name has its entries
+## replaced (a list replaces a list) and its own mode/cooldown merged.
+static func layer(specs: Array) -> Dictionary:
+	var out := {"rotation": "", "mode": "", "cooldown": -1, "rotations": {}, "commands": {"names": {}}}
+	for s: Variant in specs:
+		var spec := s as Dictionary
+		var cmds: Dictionary = spec.get("commands", {})
+		if cmds.has("prefix"):
+			(out["commands"] as Dictionary)["prefix"] = cmds["prefix"]
+		for role: Variant in (cmds.get("names", {}) as Dictionary):
+			# A list of names replaces the list below it, like any other list here.
+			((out["commands"] as Dictionary)["names"] as Dictionary)[role] = cmds["names"][role]
+		for k in ["rotation", "mode"]:
+			if str(spec.get(k, "")) != "":
+				out[k] = spec[k]
+		if int(spec.get("cooldown", -1)) >= 0:
+			out["cooldown"] = spec["cooldown"]
+		for name: Variant in (spec.get("rotations", {}) as Dictionary):
+			var incoming: Dictionary = (spec["rotations"] as Dictionary)[name]
+			var have: Dictionary = (out["rotations"] as Dictionary).get(name, {"mode": "", "cooldown": -1, "entries": PackedStringArray(), "settings": {}})
+			var merged := have.duplicate()
+			if str(incoming.get("mode", "")) != "":
+				merged["mode"] = incoming["mode"]
+			if int(incoming.get("cooldown", -1)) >= 0:
+				merged["cooldown"] = incoming["cooldown"]
+			# A rotation that only sets a mode keeps the list below it.
+			if not (incoming["entries"] as PackedStringArray).is_empty() or not have.has("entries"):
+				merged["entries"] = incoming["entries"]
+				merged["settings"] = incoming.get("settings", {})
+			(out["rotations"] as Dictionary)[name] = merged
+	return out
+
+
+## Whether a file key (`game-g2gfast`, `gamemann/game-g2gfast`) names [param game].
+## Id or name half, as content.yml matches games.
+static func key_matches(key: String, game: String) -> bool:
+	if key == game:
+		return true
+	return key.get_slice("/", key.get_slice_count("/") - 1) == game.get_slice("/", game.get_slice_count("/") - 1) \
+		and (not key.contains("/") or not game.contains("/"))
+
+
+## The rotation to play: [param requested] if the spec has it, else the spec's `rotation:`,
+## else `main`, else the only one there is. "" when the spec lists nothing.
+static func active_name(spec: Dictionary, requested: String = "") -> String:
+	var rots: Dictionary = spec.get("rotations", {})
+	for n in [requested, str(spec.get("rotation", "")), MAIN]:
+		if str(n) != "" and rots.has(str(n)):
+			return str(n)
+	return str(rots.keys()[0]) if rots.size() == 1 else ""
+
+
+static func mode_of(spec: Dictionary, name: String) -> String:
+	var m := str(((spec.get("rotations", {}) as Dictionary).get(name, {}) as Dictionary).get("mode", ""))
+	if m == "":
+		m = str(spec.get("mode", ""))
+	return m if m != "" else "random"
+
+
+static func cooldown_of(spec: Dictionary, name: String, fallback: int) -> int:
+	var c := int(((spec.get("rotations", {}) as Dictionary).get(name, {}) as Dictionary).get("cooldown", -1))
+	if c < 0:
+		c = int(spec.get("cooldown", -1))
+	return c if c >= 0 else fallback
+
+
+## Expands [param entries] against [param candidates] in written order, each glob's matches sorted by id, no repeats.
+## Shapes: `owner/map`, a name or glob, `owner/*`, `owner/collection/*` ([param collections]). Case-insensitive;
+## entries matching nothing go to [param unmatched] for the caller to WARN.
+static func expand(entries: PackedStringArray, candidates: Array, collections: Dictionary,
+		unmatched: PackedStringArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	for raw in entries:
+		var entry := raw.strip_edges().to_lower()
+		var found: Array = []
+		if entry.ends_with("/*") and entry.count("/") == 2:
+			var members := PackedStringArray()
+			for m: Variant in (collections.get(entry.trim_suffix("/*"), []) as Array):
+				members.append(str(m).to_lower())
+			for c: Dictionary in candidates:
+				if members.has(_ref(c)) or (str(c.get("ref", "")) == "" and _members_name(members, str(c["id"]))):
+					found.append(str(c["id"]))
+		elif entry.contains("/"):
+			for c: Dictionary in candidates:
+				var ref := _ref(c)
+				var owned := str(c.get("ref", "")) != ""
+				# A candidate with no known owner can only be named exactly (`owner/map`): letting
+				# `owner/*` claim it would put every ownerless map in every owner's wildcard.
+				var name_part := entry.get_slice("/", 1)
+				if (owned and ref.matchn(entry)) or (not owned and not name_part.contains("*") and not name_part.contains("?") and str(c["id"]).matchn(name_part)):
+					found.append(str(c["id"]))
+		else:
+			for c: Dictionary in candidates:
+				if str(c["id"]).matchn(entry):
+					found.append(str(c["id"]))
+		if found.is_empty():
+			unmatched.append(raw)
+			continue
+		found.sort()
+		for id: Variant in found:
+			if not out.has(str(id)):
+				out.append(str(id))
+	return out
+
+
+## The settings the rotation's mapping entries give [param id]: every entry whose pattern
+## matches it, merged in written order (a later entry wins a key). `{}` for a string-only rotation.
+static func settings_for(spec: Dictionary, name: String, id: String, candidates: Array, collections: Dictionary = {}) -> Dictionary:
+	var rot: Dictionary = (spec.get("rotations", {}) as Dictionary).get(name, {})
+	var all: Dictionary = rot.get("settings", {})
+	var out := {}
+	for pattern: Variant in (rot.get("entries", PackedStringArray()) as PackedStringArray):
+		if not all.has(pattern):
+			continue
+		if expand(PackedStringArray([pattern]), candidates, collections, PackedStringArray()).has(id):
+			out.merge(all[pattern], true)
+	return out
+
+
+## Reads [param v] into [param rot]'s `entries` and `settings`.
+static func _fill(rot: Dictionary, v: Variant, warnings: PackedStringArray, where: String) -> void:
+	var entries := rot["entries"] as PackedStringArray
+	var settings := rot["settings"] as Dictionary
+	var items: Array = v if v is Array else ([v] if v != null else [])
+	for item: Variant in items:
+		var pattern := ""
+		var extra := {}
+		if item is Dictionary:
+			var d := item as Dictionary
+			var key := ""
+			for k in PATTERN_KEYS:
+				if d.has(k):
+					key = k
+					break
+			if key != "":
+				pattern = str(d[key]).strip_edges()
+				for k: Variant in d:
+					if str(k) != key:
+						extra[str(k)] = d[k]
+			elif d.size() == 1 and d.values()[0] is Dictionary:
+				pattern = str(d.keys()[0]).strip_edges()
+				extra = (d.values()[0] as Dictionary).duplicate(true)
+			else:
+				warnings.append("%sa rotation entry that is a map needs entry:/map:/id:/name: or a single `pattern: {settings}`" % _at(where))
+				continue
+		else:
+			pattern = str(item).strip_edges()
+		if pattern == "":
+			continue
+		if not entries.has(pattern):
+			entries.append(pattern)
+		if not extra.is_empty():
+			if not settings.has(pattern):
+				settings[pattern] = {}
+			(settings[pattern] as Dictionary).merge(extra, true)
+	rot["entries"] = entries
+
+
+static func _ref(c: Dictionary) -> String:
+	return str(c.get("ref", "")).to_lower()
+
+
+static func _members_name(members: PackedStringArray, id: String) -> bool:
+	for m in members:
+		if m.get_slice("/", 1).to_lower() == id.to_lower():
+			return true
+	return false
+
+
+static func _entries(v: Variant) -> PackedStringArray:
+	var out := PackedStringArray()
+	if v is Array:
+		for e: Variant in (v as Array):
+			var s := str(e).strip_edges()
+			if s != "" and not out.has(s):
+				out.append(s)
+	elif v != null and str(v).strip_edges() != "":
+		out.append(str(v).strip_edges())
+	return out
+
+
+static func _mode(v: Variant, warnings: PackedStringArray, where: String) -> String:
+	var m := str(v).strip_edges().to_lower()
+	if m == "sequential":
+		m = "cycle"
+	if not MODES.has(m):
+		warnings.append("%smode must be random or cycle, not '%s'; random is used" % [_at(where), m])
+		return "random"
+	return m
+
+
+static func _at(where: String) -> String:
+	return where + ": " if where != "" else ""
+
+
+## A `commands:` block: `prefix:` ("" allowed, absent means the code's own) and `names:` (role to
+## a name or list, the first shown in help, the rest aliases). One leading "!" or "/" is removed;
+## a name that is not lowercase letters, digits and underscores is dropped with a warning.
+static func _commands(value: Variant, warnings: PackedStringArray, where: String) -> Dictionary:
+	var out := {"names": {}}
+	if not value is Dictionary:
+		warnings.append("%scommands: must be a map" % _at(where))
+		return out
+	var block := value as Dictionary
+	if block.has("prefix"):
+		out["prefix"] = str(block["prefix"]).strip_edges()
+	var names: Variant = block.get("names", {})
+	if not names is Dictionary:
+		warnings.append("%scommands: names: must be a map of role to name or list of names" % _at(where))
+		return out
+	for role: Variant in (names as Dictionary):
+		var raw: Variant = (names as Dictionary)[role]
+		var list: Array = raw if raw is Array else [raw]
+		var good := PackedStringArray()
+		for n: Variant in list:
+			var text := str(n).strip_edges()
+			# An owner writes the name as players type it ("!rtv", "/rtv"). The chat prefix is
+			# `prefix:`, not part of the name, so one leading "!" or "/" is taken off rather
+			# than the whole name dropped for it.
+			if text.begins_with("!") or text.begins_with("/"):
+				text = text.substr(1).strip_edges()
+			var ok := text != ""
+			for i in text.length():
+				var c := text.unicode_at(i)
+				if not ((c >= 97 and c <= 122) or (c >= 48 and c <= 57) or c == 95):
+					ok = false
+			if ok:
+				good.append(text)
+			else:
+				warnings.append("%scommands: '%s' is not a usable command name (lowercase letters, digits, underscore)" % [_at(where), text])
+		if not good.is_empty():
+			(out["names"] as Dictionary)[str(role)] = good
+	return out
