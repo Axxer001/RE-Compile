@@ -62,3 +62,46 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.restart()
 	await tree.physics_frame
 	check.call(mix.level == 0.0 and not mix.music.playing, "restart: no music")
+
+	# ---- the three Rank E spells' sounds [Sir, 2026-11-14] ----------------------------------------
+	var fx: Node3D = c.sfx
+	var spell_sounds := ["breath_loop", "firefly_launch", "firefly_pop", "charge_hum", "nuke"]
+	var peaks := {}
+	for r in spell_sounds: peaks[r] = fx.peak(r)
+	var loud_ok: bool = peaks.values().all(func(v): return v > 0.08 and v < 0.95)
+	check.call(loud_ok and fx.streams.breath_loop.loop_mode == AudioStreamWAV.LOOP_FORWARD and fx.streams.charge_hum.loop_mode == AudioStreamWAV.LOOP_FORWARD and fx.streams.nuke.loop_mode == AudioStreamWAV.LOOP_DISABLED, "spell sounds render, none clipped (peaks %s); the breath roar and the charge hum loop, the boom does not" % str(peaks.values().map(func(v): return snappedf(v, 0.01))))
+	var g150: float = fx.boom_gain(150.0)
+	check.call(fx.boom_player.attenuation_model == AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE and fx.boom_gain(5.0) <= 1.0 + 1e-6 and g150 > 0.2 and g150 < 0.4 and fx.boom_player.max_distance >= 300.0 and peaks.nuke <= 0.85, "the Explosion boom is positional with distance falloff: full at 5 m (capped at 0 dB, recipe peak %.2f), %.1f dB at 150 m: heard across the forest" % [peaks.nuke, linear_to_db(g150)])
+	var dropped0: int = fx.pops_dropped
+	var let := 0
+	for i in 30:
+		if fx.play_capped("firefly_pop", Vector3.ZERO, 100.0): let += 1 # 30 missiles landing at once
+	check.call(let == fx.POP_CAP and fx.pops_dropped == dropped0 + 30 - fx.POP_CAP, "30 Firefly hits at once: %d pops play, the rest are dropped (no clipping pile-up)" % let)
+	# The loops follow the spells: breath for its channel; the charge builds, then is cut off.
+	var pc: Node3D = c.pcombat
+	c.park_enemies()
+	pc.mp = pc.max_mp(s.run.time)
+	c.spells.start_breath(s.grimoire.page("dragons_breath"), "spell_1", s.run.time)
+	var breath_on: bool = fx.loop_playing("breath")
+	c.spells.end_breath()
+	var breath_off: bool = not fx.loop_playing("breath") and fx.loops.breath.stopping
+	c.spells.start_explosion(s.grimoire.page("explosion"), "spell_3", s.run.time)
+	var hum_on: bool = fx.loop_playing("charge")
+	steps(c, 10.0)
+	var pitch_mid: float = fx.loops.charge.player.pitch_scale
+	c.player.health.apply(c.DamagePacket.new(98001, "test", "infected", 1.0, "bite"), s.run.time) # breaks the charge
+	var hum_cut: bool = not fx.loop_playing("charge") and not fx.loops.charge.player.playing
+	check.call(breath_on and breath_off and hum_on and pitch_mid > 1.0 and pitch_mid < 1.25 and hum_cut, "the breath roar plays while breathing and fades out after; the charge hum rises (pitch %.2f at half charge) and cuts off when a hit breaks it" % pitch_mid)
+	var booms0: int = fx.count("nuke")
+	c.spells.reset()
+	pc.ready_at.erase("spell_3")
+	pc.mp = pc.max_mp(s.run.time)
+	c.spells.start_explosion(s.grimoire.page("explosion"), "spell_3", s.run.time)
+	var bp := Vector3(70, 0, 20)
+	c.spells.charge.point = bp
+	steps(c, 20.2)
+	var boomed: bool = fx.count("nuke") == booms0 + 1 and fx.boom_player.global_position.distance_to(bp) < 0.01 and not fx.loop_playing("charge")
+	check.call(boomed, "a full charge: the hum stops and the boom sounds at the blast point")
+	c.spells.reset()
+	s.restart()
+	await tree.physics_frame

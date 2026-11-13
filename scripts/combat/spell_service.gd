@@ -95,6 +95,7 @@ func start_breath(pg: Resource, slot: String, now: float) -> void:
 			breath_fx = world.vfx.breath_cone()
 			if breath_fx: world.player.camera.add_child(breath_fx)
 		world.vfx.set_breath(breath_fx, true)
+	if world.get("sfx") != null: world.sfx.start_loop("breath", "breath_loop")
 
 func breath_mouth() -> Vector3:
 	var cam: Camera3D = world.player.camera
@@ -137,6 +138,7 @@ func _tick_breath(now: float) -> void:
 
 func end_breath() -> void:
 	breath = {}
+	if world and world.get("sfx") != null: world.sfx.stop_loop("breath")
 	if breath_fx and world.get("vfx") != null: world.vfx.set_breath(breath_fx, false)
 
 # ---- Firefly ---------------------------------------------------------------------------------
@@ -149,6 +151,7 @@ func start_firefly(pg: Resource, now: float) -> int:
 	var origin: Vector3 = pc.hand_origin()
 	var pow: float = pc._pow(now)
 	var launched := 0
+	if world.get("sfx") != null: world.sfx.play("firefly_launch", origin)
 	for tg in targets:
 		for k in per:
 			var side := Vector3(rng.randf_range(-1, 1), 0, rng.randf_range(-1, 1)).normalized() * rng.randf_range(0.5, 1.0) * float(FIREFLY.spread)
@@ -212,6 +215,7 @@ func _tick_missiles(delta: float, now: float) -> void:
 			if world.effects != null and not tg.health.dead and result in ["applied", "duplicate"]:
 				world.effects.apply(String(tg.id), m.effect, float(FIREFLY.burn_s), now, "player", m.pow)
 			if world.get("vfx") != null: world.vfx.missile_hit(m.pos, now)
+			if world.get("sfx") != null: world.sfx.play_capped("firefly_pop", m.pos, now)
 			_free_missile(m)
 			missiles.erase(m)
 
@@ -230,6 +234,9 @@ func start_explosion(pg: Resource, slot: String, now: float) -> void:
 		if marker_fx:
 			marker_fx.global_position = charge.point
 			world.vfx.set_loop(marker_fx, true)
+	if world.get("sfx") != null:
+		world.sfx.start_loop("charge", "charge_hum")
+		world.sfx.set_loop_build("charge", 0.0)
 
 # The crosshair point up to 80 m; nothing hit: 80 m out, dropped to the ground.
 func lock_point() -> Vector3:
@@ -246,6 +253,7 @@ func charge_fraction(now: float) -> float:
 
 func _tick_charge(now: float) -> void:
 	if charge.is_empty(): return
+	if world.get("sfx") != null: world.sfx.set_loop_build("charge", charge_fraction(now))
 	if now + 1e-6 < float(charge.until): return
 	var pg: Resource = charge.page
 	var pow: float = world.pcombat._pow(now)
@@ -258,6 +266,7 @@ func _tick_charge(now: float) -> void:
 		if world.effects != null and not tg.health.dead and result in ["applied", "duplicate"]:
 			world.effects.apply(String(tg.id), pg.effect_id, float(EXPLOSION.burn_s), now, "player", pow)
 	if world.get("vfx") != null: world.vfx.cataclysm(point, now)
+	if world.get("sfx") != null: world.sfx.boom(point)
 	if world.get("noise") != null: world.noise.emit_noise(point, 60.0, "blast", "player", now)
 	_end_charge(now)
 
@@ -272,6 +281,7 @@ func _end_charge(now: float) -> void:
 	var pg: Resource = charge.get("page")
 	charge = {}
 	if marker_fx and world.get("vfx") != null: world.vfx.set_loop(marker_fx, false)
+	if world.get("sfx") != null: world.sfx.stop_loop("charge", 0.0) # cut off: by the blast, or by the hit that broke it
 	if slot != "" and pg != null: world.pcombat.start_cooldown(slot, pg, now) # the 5 min starts when it ends
 
 # ---- clock ------------------------------------------------------------------------------------
@@ -292,4 +302,5 @@ func reset() -> void:
 	if not charge.is_empty():
 		charge = {}
 		if marker_fx and world and world.get("vfx") != null: world.vfx.set_loop(marker_fx, false)
+	if world and world.get("sfx") != null: world.sfx.stop_all_loops()
 	log.clear()

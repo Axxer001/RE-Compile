@@ -18,7 +18,22 @@ const RECIPES := {
 	"scrape": [1.2, -4.0, 14.0], "hit": [0.09, -6.0, 14.0], "bite": [0.35, -4.0, 16.0],
 	"pickup": [0.08, -12.0, 6.0], "van": [0.3, -8.0, 10.0], "click": [0.05, -10.0, 6.0],
 	"chime": [1.4, -6.0, 40.0], # level / rank up [R15]: two bell notes
+	# The three Rank E spells [Sir, 2026-11-14]:
+	"breath_loop": [2.0, -5.0, 30.0],    # Dragon's Breath: a flame roar, looped for the whole channel
+	"firefly_launch": [0.7, -3.0, 30.0], # the 30-missile volley's whoosh
+	"firefly_pop": [0.12, -12.0, 18.0],  # one missile's hit (capped: see play_capped)
+	"charge_hum": [2.0, -9.0, 40.0],     # Explosion's charge, looped; it rises in pitch and volume to the blast
+	"nuke": [3.6, 0.0, 0.0],             # the eruption: its own long-range player (boom())
 }
+const LOOPED := ["breath_loop", "charge_hum"]
+# The boom carries across the 150 m forest: inverse-distance falloff with a
+# wide unit size (gain = unit / distance: -11.5 dB at 150 m), capped at 0 dB up
+# close; the recipe peaks at 0.8, so it never clips the master bus.
+const BOOM := {"unit_size": 40.0, "max_db": 0.0, "volume_db": 0.0, "max_distance": 400.0}
+const POP_CAP := 4          # missile pops at most this many per POP_WINDOW s: 30 hits never stack into clipping
+const POP_WINDOW := 0.1
+const FADE_IN_S := 0.25
+const FADE_OUT_S := 0.35
 # NoiseService kinds -> recipe (gameplay noises that also make a sound)
 const NOISE_SOUNDS := {"footsteps": "footstep", "door": "door", "scan": "scan", "alarm": "alarm",
 	"blast": "blast", "fire": "fire", "throw": "throw"}
@@ -28,6 +43,10 @@ var players: Array[AudioStreamPlayer3D] = []
 var next_player := 0
 var played: Array = []  # [{recipe, pos}] recent plays (tests, debugging)
 var muted := false
+var loops := {}         # name -> {player: AudioStreamPlayer, target_db, gain (0..1 fade), stopping}
+var boom_player: AudioStreamPlayer3D
+var _pop_times: Array = []
+var pops_dropped := 0
 
 func _ready() -> void:
 	AudioMix.ensure_buses()
@@ -40,6 +59,16 @@ func _ready() -> void:
 		p.bus = "SFX"
 		add_child(p)
 		players.append(p)
+	boom_player = AudioStreamPlayer3D.new()
+	boom_player.name = "Boom"
+	boom_player.bus = "SFX"
+	boom_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	boom_player.unit_size = BOOM.unit_size
+	boom_player.max_db = BOOM.max_db
+	boom_player.volume_db = BOOM.volume_db
+	boom_player.max_distance = BOOM.max_distance
+	boom_player.stream = streams["nuke"]
+	add_child(boom_player)
 
 func play(recipe: String, at: Vector3) -> void:
 	if not streams.has(recipe): return
@@ -53,6 +82,78 @@ func play(recipe: String, at: Vector3) -> void:
 	p.max_distance = RECIPES[recipe][2]
 	p.global_position = at
 	p.play()
+
+# A short sound that may come in bursts (Firefly's 30 hits): at most POP_CAP
+# per POP_WINDOW seconds of the given clock; the rest are dropped (counted).
+func play_capped(recipe: String, at: Vector3, now: float) -> bool:
+	_pop_times = _pop_times.filter(func(t): return now - float(t) < POP_WINDOW)
+	if _pop_times.size() >= POP_CAP:
+		pops_dropped += 1
+		return false
+	_pop_times.append(now)
+	play(recipe, at)
+	return true
+
+# A looping sound owned by a spell (the player's own, so not positional): it
+# fades in when started and out when stopped (fade_s = 0: cut at once).
+func start_loop(name: String, recipe: String) -> void:
+	var e: Dictionary = loops.get(name, {})
+	if e.is_empty():
+		var p := AudioStreamPlayer.new()
+		p.name = "Loop_" + name
+		p.bus = "SFX"
+		p.stream = streams[recipe]
+		add_child(p)
+		e = {"player": p, "target_db": float(RECIPES[recipe][1]), "gain": 0.0, "stopping": false, "fade_out": FADE_OUT_S, "recipe": recipe}
+		loops[name] = e
+	e.stopping = false
+	e.player.pitch_scale = 1.0
+	if not e.player.playing and not muted: e.player.play()
+	played.append({"recipe": recipe, "pos": Vector3.ZERO, "loop": name})
+
+func stop_loop(name: String, fade_s := FADE_OUT_S) -> void:
+	if not loops.has(name): return
+	var e: Dictionary = loops[name]
+	e.stopping = true
+	e.fade_out = fade_s
+	if fade_s <= 0.0:
+		e.gain = 0.0
+		e.player.stop()
+
+func loop_playing(name: String) -> bool:
+	return loops.has(name) and not loops[name].stopping and (loops[name].player.playing or muted)
+
+# Explosion's charge builds to the blast: pitch and volume rise with the charge (0..1).
+func set_loop_build(name: String, frac: float) -> void:
+	if not loops.has(name): return
+	var e: Dictionary = loops[name]
+	e.player.pitch_scale = lerpf(0.6, 1.6, clampf(frac, 0.0, 1.0))
+	e.build = clampf(frac, 0.0, 1.0)
+
+func _process(delta: float) -> void:
+	for name in loops:
+		var e: Dictionary = loops[name]
+		if e.stopping:
+			e.gain = maxf(0.0, e.gain - delta / maxf(e.fade_out, 0.001))
+			if e.gain <= 0.0 and e.player.playing: e.player.stop()
+		else:
+			e.gain = minf(1.0, e.gain + delta / FADE_IN_S)
+		var build: float = e.get("build", 1.0)
+		var db: float = e.target_db + linear_to_db(maxf(e.gain * lerpf(0.45, 1.0, build), 0.0001))
+		e.player.volume_db = db
+
+# The eruption, heard across the forest from the blast point.
+func boom(at: Vector3) -> void:
+	played.append({"recipe": "nuke", "pos": at})
+	boom_player.global_position = at
+	if not muted: boom_player.play()
+
+# Linear gain the boom reaches at a distance (the player's inverse-distance model).
+func boom_gain(distance: float) -> float:
+	return minf(db_to_linear(BOOM.max_db), BOOM.unit_size / maxf(distance, 0.001)) * db_to_linear(BOOM.volume_db)
+
+func stop_all_loops() -> void:
+	for name in loops: stop_loop(name, 0.0)
 
 func on_noise(event: Dictionary) -> void:
 	if NOISE_SOUNDS.has(event.kind): play(NOISE_SOUNDS[event.kind], event.origin)
@@ -123,6 +224,24 @@ static func _render(recipe: String) -> AudioStreamWAV:
 			"van":
 				phase += TAU * (660.0 if u < 0.5 else 990.0) / RATE
 				v = sin(phase) * 0.4
+			"breath_loop": # roaring flame: low-passed noise with a slow surge; seamless loop (sin of whole cycles)
+				lp += (noise - lp) * 0.18
+				phase += TAU * 55.0 / RATE
+				v = (lp * 1.5 + 0.18 * sin(phase)) * (0.75 + 0.25 * sin(TAU * 2.0 * u)) * 0.7
+			"firefly_launch": # a rising whoosh
+				lp += (noise - lp) * (0.05 + 0.35 * u)
+				v = lp * sin(PI * u) * 0.8
+			"firefly_pop":
+				phase += TAU * (700.0 - 400.0 * u) / RATE
+				v = (sin(phase) * 0.5 + noise * 0.3) * exp(-t * 35.0)
+			"charge_hum": # a tense rising hum: two detuned tones and a rumble, looping cleanly
+				phase += TAU * 110.0 / RATE
+				v = (sin(phase) * 0.35 + sin(phase * 1.5 + 0.3) * 0.2 + sin(phase * 0.5) * 0.25) * (0.8 + 0.2 * sin(TAU * 4.0 * u))
+			"nuke": # a long, deep eruption: crack, rumble and roll-off, peaking at 0.8
+				lp += (noise - lp) * (0.05 + 0.25 * exp(-t * 6.0))
+				phase += TAU * (48.0 - 18.0 * u) / RATE
+				var env := (1.0 - exp(-t * 80.0)) * exp(-t * 1.1)
+				v = (lp * 1.9 + sin(phase) * 0.9 + noise * 0.6 * exp(-t * 12.0)) * env * 0.3
 			"chime":
 				var f := 880.0 if t < 0.18 else 1318.5
 				var tt := t if t < 0.18 else t - 0.18
@@ -135,6 +254,10 @@ static func _render(recipe: String) -> AudioStreamWAV:
 	w.mix_rate = RATE
 	w.stereo = false
 	w.data = data
+	if recipe in LOOPED:
+		w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		w.loop_begin = 0
+		w.loop_end = n
 	return w
 
 # Peak absolute sample of a rendered recipe (tests: not silent, not clipped flat).
