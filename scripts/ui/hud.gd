@@ -20,6 +20,8 @@ const ICON_COLORS := {
 	"scorch_and_burn": Color(0.9, 0.35, 0.12), "cultivate": Color(0.35, 0.7, 0.35), "ring_of_fire": Color(0.95, 0.55, 0.1),
 	"quick_step": Color(0.3, 0.7, 0.9), "sage_arts": Color(0.85, 0.75, 0.3),
 	"dragons_breath": Color(0.95, 0.35, 0.1), "firefly": Color(0.95, 0.8, 0.25), "explosion": Color(0.8, 0.15, 0.1),
+	"flight_of_the_phoenix": Color(1.0, 0.5, 0.1), "call_of_the_phoenix": Color(0.9, 0.3, 0.15), "rise_of_the_phoenix": Color(1.0, 0.7, 0.2),
+	"heads_or_tails": Color(0.95, 0.78, 0.25), "where_are_my_coins": Color(0.8, 0.65, 0.2), "let_it_ride": Color(0.45, 0.8, 0.4), "all_in": Color(0.85, 0.2, 0.3),
 }
 const SLOT_PX := 58
 const SMALL_PX := 42
@@ -40,10 +42,45 @@ var status_row: HBoxContainer # the player's buffs and debuffs [R12]
 var cross: Label
 var pause_label: Label
 var cast_bar: Dictionary      # {back, fill, label}: Dragon's Breath / Explosion progress [2026-11-14]
+# The Gambler set [2026-11-14]: Let it Ride's die, the coin purse, the Jackpot's
+# gold flash and Gambling Addiction's purple, desaturated view (under the HUD).
+const DiceView = preload("res://scripts/ui/dice_view.gd")
+const JACKPOT_FLASH_S := 0.8
+var die: SubViewportContainer
+var coin_label: Label
+var gold_flash: ColorRect
+var addict_tint: ColorRect
 const CAST_W := 320.0
 
 func _ready() -> void:
 	layer = 1
+	addict_tint = ColorRect.new()
+	addict_tint.name = "AddictionTint"
+	addict_tint.set_anchors_preset(Control.PRESET_FULL_RECT)
+	addict_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh := Shader.new()
+	sh.code = """shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
+uniform float amount = 0.75;
+void fragment() {
+	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
+	float g = dot(c, vec3(0.299, 0.587, 0.114));
+	vec3 p = mix(c, vec3(g) * vec3(0.85, 0.55, 1.15), amount);
+	COLOR = vec4(p, 1.0);
+}
+"""
+	var sm := ShaderMaterial.new()
+	sm.shader = sh
+	addict_tint.material = sm
+	addict_tint.visible = false
+	add_child(addict_tint)
+	gold_flash = ColorRect.new()
+	gold_flash.name = "JackpotFlash"
+	gold_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	gold_flash.color = Color(1.0, 0.82, 0.2, 0.0)
+	gold_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gold_flash.visible = false
+	add_child(gold_flash)
 	cross = Label.new()
 	cross.text = "+"
 	cross.set_anchors_preset(Control.PRESET_CENTER)
@@ -61,6 +98,19 @@ func _ready() -> void:
 	status_row.add_theme_constant_override("separation", 4)
 	status_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(status_row)
+	coin_label = Label.new()
+	coin_label.name = "Coins"
+	coin_label.position = Vector2(24 + BAR_W + 14, 48)
+	coin_label.add_theme_font_size_override("font_size", 18)
+	coin_label.add_theme_color_override("font_color", Color(1.0, 0.82, 0.3))
+	coin_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	coin_label.add_theme_constant_override("outline_size", 4)
+	coin_label.visible = false
+	add_child(coin_label)
+	die = DiceView.new()
+	die.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	die.position += Vector2(DiceView.PX * 0.5 + 250, -SLOT_PX - 40 - DiceView.PX)
+	add_child(die)
 	mission = Label.new()
 	mission.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	mission.position += Vector2(-340, 20)
@@ -201,6 +251,15 @@ func refresh(m: Dictionary) -> void:
 	for slot in slots: _set_slot(slots[slot], m.slots.get(slot, {}))
 	_set_cast(m.get("channel", {}))
 	_set_statuses(m.get("statuses", []))
+	var now: float = float(m.get("now", 0.0))
+	die.update(m.get("die", {}), now)
+	var coins: int = int(m.get("coins", -1))
+	coin_label.visible = coins >= 0
+	if coins >= 0: coin_label.text = "Coins %d/10" % coins
+	var jt: float = now - float(m.get("jackpot_at", -INF))
+	gold_flash.visible = jt >= 0.0 and jt < JACKPOT_FLASH_S
+	if gold_flash.visible: gold_flash.color.a = 0.35 * (1.0 - jt / JACKPOT_FLASH_S)
+	addict_tint.visible = bool(m.get("addicted", false))
 	var lines: Array = m.get("notices", [])
 	while notice_box.get_child_count() > lines.size():
 		var ch := notice_box.get_child(notice_box.get_child_count() - 1)
@@ -236,8 +295,8 @@ func _set_slot(s: Dictionary, v: Dictionary) -> void:
 	var frac: float = v.get("cd_frac", 0.0) if st == "cooldown" else 0.0
 	s.cd = frac
 	s.sweep.size.y = s.icon.size.y * frac
-	s.secs.text = ("%.0f" % ceilf(v.get("cd_s", 0.0))) if st == "cooldown" else ("R%s" % v.get("rank_req", "") if st == "locked" else "")
-	s.root.modulate = Color(0.45, 0.45, 0.5) if st in ["locked", "mp"] else Color(1, 1, 1)
+	s.secs.text = ("%.0f" % ceilf(v.get("cd_s", 0.0))) if st == "cooldown" else ("R%s" % v.get("rank_req", "") if st == "locked" else ("X" if st == "addicted" else ""))
+	s.root.modulate = Color(0.45, 0.45, 0.5) if st in ["locked", "mp"] else (Color(0.5, 0.3, 0.6) if st == "addicted" else Color(1, 1, 1))
 
 # One tile per active effect: its colour and glyph, a dark sweep for the time
 # already gone, the seconds left. frac = time left / full time (1 = fresh).

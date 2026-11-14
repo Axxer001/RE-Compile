@@ -43,8 +43,10 @@ func setup(main: Node3D) -> void:
 	world = main
 	rng.seed = 0x51F7
 
-# What locks the player's hands: "breath", "explosion" or "".
+# What locks the player's hands: "breath", "explosion", "flight", "call" or "".
 func busy() -> String:
+	if not flight.is_empty(): return "flight"
+	if not calling.is_empty(): return "call"
 	if not charge.is_empty(): return "explosion"
 	if not breath.is_empty(): return "breath"
 	return ""
@@ -54,6 +56,7 @@ func frozen() -> bool:
 	return not charge.is_empty()
 
 func hold_position() -> Vector3:
+	if not calling.is_empty(): return calling.hold
 	return charge.get("hold", Vector3.ZERO)
 
 # ---- checks before anything is spent ---------------------------------------------------
@@ -66,6 +69,8 @@ func precheck(id: String, now: float) -> String:
 		"explosion":
 			var pc = world.pcombat
 			if pc.mp < pc.max_mp(now) - 0.001 and not pc.free_casting(): return "mp_full"
+		"flight_of_the_phoenix":
+			if not world.player.is_on_floor(): return "airborne"
 	return ""
 
 # Firefly's locks: enemies within range, on screen and in line of sight; 5 at most.
@@ -294,6 +299,9 @@ func tick(delta: float, now: float) -> void:
 	_tick_breath(now)
 	_tick_missiles(delta, now)
 	_tick_charge(now)
+	_tick_flight(now)
+	_tick_call(now)
+	_tick_decor(now)
 
 func reset() -> void:
 	if not breath.is_empty(): end_breath()
@@ -302,5 +310,269 @@ func reset() -> void:
 	if not charge.is_empty():
 		charge = {}
 		if marker_fx and world and world.get("vfx") != null: world.vfx.set_loop(marker_fx, false)
+	if not flight.is_empty(): _end_flight()
+	for r in rain:
+		if r.ring and is_instance_valid(r.ring): r.ring.queue_free()
+	rain.clear()
+	if not calling.is_empty():
+		for n in calling.rings:
+			if is_instance_valid(n): n.queue_free()
+		calling = {}
+	for r in _rings:
+		if is_instance_valid(r.node): r.node.queue_free()
+	_rings.clear()
+	for k in _loops: if world and world.get("vfx") != null: world.vfx.set_loop(_loops[k], false)
+	_fx_until.clear()
+	_attack_was = false
 	if world and world.get("sfx") != null: world.sfx.stop_all_loops()
 	log.clear()
+
+# ---- the Phoenix set [Sir, 2026-11-14; docs/plan-phoenix-spells.md] --------------------------
+#   Flight of the Phoenix: on cast, enemies within 20 m are pulled to the cast spot
+#   (no damage) and Concussed 3 s (-80% move and attack speed). The player climbs
+#   30 m over 5 s, then hovers 5 s at the peak. LMB at any point picks a landing
+#   spot: ground inside the 50 m ring round the cast spot (sky, outside or a wall
+#   is refused, with a marker). The dive takes 3 s. Damage: 100% Magic Pow up to
+#   2 s of climb, then linear to 500% at 5 s (the peak), fixed when the spot is
+#   picked. No pick by the end of the hover: the dive goes to the cast spot.
+#   Impact: 20 m radius, Burn, everything knocked back to 20 m. Throughout, the
+#   player cannot move (looking is free), is invulnerable, takes no fall damage,
+#   and nothing else can be cast (Sage Arts and Rise's heal wait too).
+#   Call of the Phoenix: a 5 s casting state, held in place (hovering if cast in
+#   the air; damage does not break it; looking is free). LMB marks up to 3 areas
+#   (7.5 m radius, on the ground, at most 30 m away). A third mark ends the cast
+#   at once; otherwise the marks made by the 5 s are kept. Each area then takes 30
+#   basic Scorch and Burn fireballs falling over 5 s; tree trunks stop them.
+const FLIGHT := {"pull_r": 20.0, "climb_s": 5.0, "height": 30.0, "window_s": 5.0, "crash_s": 3.0, "ring_r": 50.0,
+	"impact_r": 20.0, "knock_to": 20.0, "burn_s": 5.0, "concuss_s": 3.0, "concuss_mult": 0.2, "reach": 140.0}
+const CALL := {"cast_s": 5.0, "areas": 3, "area_r": 7.5, "reach": 30.0, "per_area": 30, "rain_s": 5.0, "drop_h": 12.0, "burn_s": 5.0}
+const CONCUSS_ID := "Phoenix Concuss"
+var flight := {}           # {page, slot, phase, start, cast_at, window_at, chosen, crash_from, crash_start, mult, picked_at}
+var calling := {}             # {page, slot, start, until, hold, areas: [Vector3]}
+var rain: Array = []       # {center, start, fired, ring}
+var _attack_was := false
+var _rings: Array = []     # {node, until} (decor)
+var _fx_until := {}        # loop fx -> time to switch off
+
+# Damage multiplier for a pick at `t` seconds into the climb (the hover counts as the peak).
+static func flight_mult(t: float) -> float:
+	if t <= 2.0: return 1.0
+	if t >= 5.0: return 5.0
+	return 1.0 + (t - 2.0) / 3.0 * 4.0
+
+func move_locked() -> bool:
+	return not flight.is_empty() or not calling.is_empty()
+
+# LMB, every tick (main.simulate): its press picks Flight's spot or marks Call's area.
+func on_input(attack_down: bool, now: float) -> void:
+	var edge := attack_down and not _attack_was
+	_attack_was = attack_down
+	if not edge: return
+	if not flight.is_empty() and flight.chosen == null: pick_flight_spot(now)
+	elif not calling.is_empty(): mark_call_area(now)
+
+func _aim_ground(reach: float) -> Dictionary:
+	var cam: Camera3D = world.player.camera
+	var eye: Vector3 = cam.global_position
+	var hit: Dictionary = world.world_ray(eye, eye - cam.global_transform.basis.z * reach)
+	if hit.is_empty() or hit.normal.y < 0.7: return {"ok": false, "point": hit.get("position", Vector3.INF)}
+	return {"ok": true, "point": hit.position}
+
+func _notice(text: String) -> void:
+	if world.has_method("show_notice"): world.show_notice(text, 1.2)
+
+# ---- Flight of the Phoenix ----------------------------------------------------------------------
+
+func start_flight(pg: Resource, slot: String, now: float) -> void:
+	var p: CharacterBody3D = world.player
+	var at: Vector3 = p.global_position
+	flight = {"page": pg, "slot": slot, "phase": "climb", "start": now, "cast_at": at, "window_at": INF, "chosen": null,
+		"crash_from": at, "crash_start": INF, "mult": 1.0, "picked_at": -1.0}
+	p.health.grant_immunity(now + FLIGHT.climb_s + FLIGHT.window_s + FLIGHT.crash_s + 0.5, ["*"], -INF, "flight")
+	# The pull: everything within 20 m is dragged to the cast spot, unhurt, and Concussed.
+	var k := 0
+	for tg in world.combat_targets():
+		if tg.health.dead or tg.get("body") == null or (tg.pos as Vector3).distance_to(at) > FLIGHT.pull_r: continue
+		var body: Node3D = tg.body
+		if not body is CharacterBody3D: continue
+		var a := TAU * float(k) / 6.0 + 0.4
+		body.global_position = at + Vector3(cos(a), 0, sin(a)) * (1.2 + 0.4 * (k / 6))
+		(body as CharacterBody3D).velocity = Vector3.ZERO
+		if world.effects != null: world.effects.apply(String(tg.id), CONCUSS_ID, FLIGHT.concuss_s, now, "player")
+		log.append({"spell": "flight_pull", "id": tg.id, "time": now})
+		k += 1
+	if world.get("vfx") != null:
+		flight.ring = world.vfx.ring(at, FLIGHT.ring_r, Color(1.0, 0.45, 0.1))
+		_loop_fx("phoenix_pull", at, now + 1.5)
+		_loop_fx("phoenix_trail", Vector3.INF, INF)
+	if world.get("sfx") != null: world.sfx.start_loop("phoenix", "phoenix_climb")
+
+func flight_phase() -> String:
+	return String(flight.get("phase", ""))
+
+# Where the player is now: climbing, hovering at the peak, or diving.
+func flight_position(now: float) -> Vector3:
+	var at: Vector3 = flight.cast_at
+	match String(flight.phase):
+		"climb":
+			var u := clampf((now - float(flight.start)) / FLIGHT.climb_s, 0.0, 1.0)
+			return at + Vector3(0, FLIGHT.height * (1.0 - (1.0 - u) * (1.0 - u)), 0)
+		"window":
+			return at + Vector3(0, FLIGHT.height, 0)
+		"crash":
+			var u := clampf((now - float(flight.crash_start)) / FLIGHT.crash_s, 0.0, 1.0)
+			return (flight.crash_from as Vector3).lerp(flight.chosen, u * u)
+	return at
+
+func pick_flight_spot(now: float) -> bool:
+	var aim := _aim_ground(FLIGHT.reach)
+	var p: Vector3 = aim.point
+	var inside: bool = aim.ok and Vector2(p.x - flight.cast_at.x, p.z - flight.cast_at.z).length() <= FLIGHT.ring_r
+	if not inside:
+		_notice("Choose ground inside the ring")
+		if world.get("vfx") != null and p != Vector3.INF: _rings.append({"node": world.vfx.ring(p, 1.2, Color(0.9, 0.1, 0.1)), "until": now + 1.0})
+		log.append({"spell": "flight_reject", "time": now})
+		return false
+	_begin_crash(p, flight_mult(now - float(flight.start)), now)
+	return true
+
+func _begin_crash(spot: Vector3, mult: float, now: float) -> void:
+	flight.chosen = spot
+	flight.mult = mult
+	flight.picked_at = now - float(flight.start)
+	flight.crash_from = flight_position(now)
+	flight.crash_start = now
+	flight.phase = "crash"
+	if world.get("vfx") != null: flight.marker = world.vfx.ring(spot, 2.0, Color(1.0, 0.8, 0.2))
+	if world.get("sfx") != null:
+		world.sfx.stop_loop("phoenix")
+		world.sfx.play("phoenix_dive", world.player.global_position)
+
+func _tick_flight(now: float) -> void:
+	if flight.is_empty(): return
+	match String(flight.phase):
+		"climb":
+			if now - float(flight.start) + 1e-6 >= FLIGHT.climb_s:
+				flight.phase = "window"
+				flight.window_at = now
+		"window":
+			if now - float(flight.window_at) + 1e-6 >= FLIGHT.window_s: _begin_crash(flight.cast_at, 5.0, now) # no pick: back to the cast spot
+		"crash":
+			if now - float(flight.crash_start) + 1e-6 >= FLIGHT.crash_s: _flight_impact(now)
+
+func _flight_impact(now: float) -> void:
+	var spot: Vector3 = flight.chosen
+	var pg: Resource = flight.page
+	var pow: float = world.pcombat._pow(now)
+	var dmg: float = pow * pg.damage_pct * float(flight.mult)
+	blast(spot, FLIGHT.impact_r, dmg, pg.effect_id, FLIGHT.burn_s, FLIGHT.knock_to, now, "flight")
+	var p: CharacterBody3D = world.player
+	p.global_position = spot
+	p.velocity = Vector3.ZERO
+	p.health.grant_immunity(now + 0.1, ["*"], -INF, "flight") # the flight's invulnerability ends with it
+	_end_flight()
+
+# A blast: damage and Burn to every enemy within `r`, everything inside pushed out to `knock_to` m.
+func blast(spot: Vector3, r: float, dmg: float, effect: String, burn_s: float, knock_to: float, now: float, tag: String) -> void:
+	var pow: float = world.pcombat._pow(now)
+	var packet := CombatController.next_id()
+	for tg in world.combat_targets():
+		if tg.health.dead or PS.gap_to(spot, tg) > r: continue
+		var result: String = tg.health.apply(DamagePacket.new(packet, "player", "player", dmg, "blast"), now)
+		log.append({"spell": tag, "id": tg.id, "amount": dmg, "result": result, "time": now})
+		if world.effects != null and not tg.health.dead and result in ["applied", "duplicate"]:
+			world.effects.apply(String(tg.id), effect, burn_s, now, "player", pow)
+		var body = tg.get("body")
+		if knock_to > 0.0 and body is CharacterBody3D and not tg.health.dead:
+			var off: Vector3 = (body as Node3D).global_position - spot
+			off.y = 0.0
+			if off.length() < 0.05: off = Vector3(1, 0, 0).rotated(Vector3.UP, rng.randf() * TAU)
+			if off.length() < knock_to: (body as Node3D).global_position = spot + off.normalized() * knock_to + Vector3(0, (body as Node3D).global_position.y - spot.y, 0)
+	if world.get("vfx") != null: world.vfx.phoenix_impact(spot, now)
+	if world.get("sfx") != null: world.sfx.boom(spot)
+	if world.get("noise") != null: world.noise.emit_noise(spot, 50.0, "blast", "player", now)
+
+func _end_flight() -> void:
+	if world.get("vfx") != null:
+		for k in ["ring", "marker"]:
+			if flight.has(k) and is_instance_valid(flight[k]): flight[k].queue_free()
+		_loop_off("phoenix_trail")
+	if world.get("sfx") != null: world.sfx.stop_loop("phoenix")
+	flight = {}
+
+# ---- Call of the Phoenix -----------------------------------------------------------------------
+
+func start_call(pg: Resource, slot: String, now: float) -> void:
+	calling = {"page": pg, "slot": slot, "start": now, "until": now + CALL.cast_s, "hold": world.player.global_position, "areas": [], "rings": []}
+
+func mark_call_area(now: float) -> bool:
+	var aim := _aim_ground(CALL.reach)
+	if not aim.ok:
+		_notice("Mark the ground within %d m" % int(CALL.reach))
+		log.append({"spell": "call_reject", "time": now})
+		return false
+	calling.areas.append(aim.point)
+	if world.get("vfx") != null: calling.rings.append(world.vfx.ring(aim.point, CALL.area_r, Color(1.0, 0.35, 0.1)))
+	log.append({"spell": "call_mark", "point": aim.point, "time": now})
+	if calling.areas.size() >= int(CALL.areas): _end_call(now)
+	return true
+
+func _end_call(now: float) -> void:
+	for i in calling.areas.size():
+		rain.append({"center": calling.areas[i], "start": now, "fired": 0, "ring": calling.rings[i] if i < calling.rings.size() else null,
+			"pow": world.pcombat._pow(now), "page": calling.page})
+	if not calling.areas.is_empty() and world.get("sfx") != null: world.sfx.start_loop("rain", "rain_loop")
+	calling = {}
+
+func _tick_call(now: float) -> void:
+	if not calling.is_empty() and now + 1e-6 >= float(calling.until): _end_call(now)
+	for r in rain.duplicate():
+		var due := int(floor((now - float(r.start)) / CALL.rain_s * CALL.per_area)) + 1
+		due = mini(due, int(CALL.per_area))
+		while int(r.fired) < due:
+			_drop_fireball(r, now)
+			r.fired += 1
+		if int(r.fired) >= int(CALL.per_area) and now - float(r.start) > CALL.rain_s + 1.5:
+			if r.ring and is_instance_valid(r.ring): r.ring.queue_free()
+			rain.erase(r)
+	if rain.is_empty() and world.get("sfx") != null and world.sfx.loop_playing("rain"): world.sfx.stop_loop("rain")
+
+func _drop_fireball(r: Dictionary, now: float) -> void:
+	var a := rng.randf() * TAU
+	var d := sqrt(rng.randf()) * CALL.area_r
+	var ground: Vector3 = (r.center as Vector3) + Vector3(cos(a) * d, 0, sin(a) * d)
+	var origin := ground + Vector3(rng.randf_range(-0.6, 0.6), CALL.drop_h, rng.randf_range(-0.6, 0.6))
+	var pg: Resource = r.page
+	world.projectiles.launch("basic", origin, (ground - origin).normalized(), {"damage": float(r.pow) * pg.damage_pct,
+		"effect": pg.effect_id, "effect_s": CALL.burn_s, "pow": r.pow, "target_point": ground})
+	log.append({"spell": "call_drop", "time": now})
+
+func rain_falling() -> int:
+	return rain.size()
+
+# ---- small helpers -----------------------------------------------------------------------------
+
+var _loops := {}
+func _loop_fx(kind: String, at: Vector3, until: float) -> void:
+	var fx: Node3D = _loops.get(kind)
+	if fx == null:
+		fx = world.vfx.make_loop(kind)
+		if fx == null: return
+		if kind == "phoenix_trail": world.player.add_child(fx)
+		elif root: root.add_child(fx)
+		_loops[kind] = fx
+	if at != Vector3.INF: fx.global_position = at
+	world.vfx.set_loop(fx, true)
+	_fx_until[kind] = until
+
+func _loop_off(kind: String) -> void:
+	if _loops.has(kind): world.vfx.set_loop(_loops[kind], false)
+	_fx_until.erase(kind)
+
+func _tick_decor(now: float) -> void:
+	for k in _fx_until.keys():
+		if now >= float(_fx_until[k]): _loop_off(k)
+	for r in _rings.duplicate():
+		if now >= float(r.until):
+			if is_instance_valid(r.node): r.node.queue_free()
+			_rings.erase(r)

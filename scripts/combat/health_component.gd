@@ -15,9 +15,13 @@ signal died(packet: RefCounted)
 var hp := 100.0
 var dead := false
 var _seen := {}            # action_id -> true
-var _immune_until := -1.0
-var _immune_from := -INF
-var _immune_kinds: Array = []
+# Immunity windows, one per source [2026-11-14]: a dash's i-frames or the end of
+# Flight no longer cut short All In's 10 s Invincibility. A new grant from the
+# same source replaces that source's window; immune while any window covers it.
+var _immunity := {}        # source -> [from, until, kinds]
+# (packet) -> bool: asked before a lethal hit lands; true = the actor does not die
+# (Rise of the Phoenix revives the player in place). The guard restores HP itself.
+var death_guard: Callable
 
 func _ready() -> void:
 	reset()
@@ -26,18 +30,16 @@ func reset() -> void:
 	hp = max_hp
 	dead = false
 	_seen.clear()
-	_immune_until = -1.0
-	_immune_from = -INF
-	_immune_kinds = []
+	_immunity.clear()
 
 # Grants immunity to the listed damage kinds for simulation times in [from, until).
-func grant_immunity(until: float, kinds: Array, from := -INF) -> void:
-	_immune_from = from
-	_immune_until = until
-	_immune_kinds = kinds.duplicate()
+func grant_immunity(until: float, kinds: Array, from := -INF, source := "") -> void:
+	_immunity[source] = [from, until, kinds.duplicate()]
 
 func immune_to(kind: String, now: float) -> bool:
-	return now >= _immune_from and now < _immune_until and (kind in _immune_kinds or "*" in _immune_kinds) # "*" = every kind
+	for w in _immunity.values():
+		if now >= float(w[0]) and now < float(w[1]) and (kind in w[2] or "*" in w[2]): return true # "*" = every kind
+	return false
 
 func accepts_actions() -> bool:
 	return not dead
@@ -52,6 +54,9 @@ func apply(packet: RefCounted, now: float) -> String:
 	if _seen.has(packet.action_id): return "duplicate"
 	if immune_to(packet.kind, now): return "immune"
 	_seen[packet.action_id] = true
+	if packet.amount >= hp and death_guard.is_valid() and death_guard.call(packet):
+		damaged.emit(packet, minf(packet.amount, max_hp))
+		return "revived"
 	var applied: float = minf(packet.amount, hp)
 	hp -= applied
 	damaged.emit(packet, applied)

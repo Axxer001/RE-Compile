@@ -166,6 +166,7 @@ func reset() -> void:
 	casts.clear()
 	_slot_was.clear()
 	cultivate_until = -INF
+	rise_kills = 0
 	if aura: aura.visible = false
 	_default_loadout()
 	if arms != null:
@@ -199,7 +200,11 @@ func hands_free() -> bool:
 
 # LMB / RMB need an attack page: an empty attack slot casts nothing [R12].
 func can_cast() -> bool:
-	return page != null and hands_free() and spell_busy() == ""
+	return page != null and hands_free() and spell_busy() == "" and not addicted()
+
+# Gambling Addiction (Let it Ride): every other attack, skill, spell and passive is off.
+func addicted() -> bool:
+	return world.get("gambler") != null and world.gambler.addicted
 
 # Dragon's Breath or Explosion running: no other attack, skill or spell.
 func spell_busy() -> String:
@@ -253,6 +258,8 @@ func use_slot(slot: String, move: Vector2, now: float) -> String:
 	var pg: Resource = loadout.get(slot)
 	if pg == null: return "empty"
 	if spell_busy() != "": return "busy"
+	if addicted() and String(pg.id) != "let_it_ride": return "addicted"
+	if String(pg.id) == "let_it_ride" and world.gambler.rolling(): return "rolling" # the die is still tumbling
 	if not pg.rank_ok(rank()): return "rank"
 	if remaining(slot, now) > 0.0: return "cooldown"
 	if world.get("spells") != null:
@@ -267,6 +274,17 @@ func use_slot(slot: String, move: Vector2, now: float) -> String:
 		"firefly":
 			world.spells.start_firefly(pg, now)
 			_pose("special", now)
+		"flight_of_the_phoenix": world.spells.start_flight(pg, slot, now)
+		"call_of_the_phoenix": world.spells.start_call(pg, slot, now)
+		"all_in": world.gambler.start_all_in(now)
+		"let_it_ride":
+			var r: Dictionary = world.gambler.roll(now)
+			var cd: float = world.gambler.cooldown_after(r) # 5 s; 3 s after a low roll; none in Addiction
+			ready_at[slot] = now + cd
+			_full_cd[slot] = cd
+			_pose("basic", now)
+			casts[String(pg.id)] = int(casts.get(String(pg.id), 0)) + 1
+			return "ok"
 		"explosion":
 			world.spells.start_explosion(pg, slot, now)
 			ready_at[slot] = INF # its cooldown starts when the charge ends (complete or broken)
@@ -283,6 +301,7 @@ func start_cooldown(slot: String, pg: Resource, now: float) -> void:
 	_full_cd[slot] = cd
 
 func _cultivate(pg: Resource, now: float) -> void:
+	if stats().buff_block: return # Gambling Addiction: no buff lands
 	for stat in CULTIVATE:
 		stats().add_modifier("cultivate", stat, CULTIVATE[stat][0], CULTIVATE[stat][1], now + pg.duration_s)
 	cultivate_until = now + pg.duration_s
@@ -316,12 +335,57 @@ func _ring_of_fire(pg: Resource, now: float) -> void:
 # Active only while it has something to restore [Sir, 2026-11-13]: equipped,
 # out of combat, alive, and HP or MP below full; at full HP and MP it rests.
 func sage_active(now: float) -> bool:
+	if spell_busy() == "flight" or addicted(): return false # Flight of the Phoenix and Gambling Addiction hold every passive
 	var pg: Resource = loadout.get("passive")
 	if pg == null or String(pg.id) != "sage_arts" or not pg.rank_ok(rank()): return false
 	if world.director.in_combat: return false
 	var h: Node = world.player.health
 	if h.dead: return false
 	return h.hp < h.max_hp - 0.001 or mp < max_mp(now) - 0.001
+
+# ---- Rise of the Phoenix [Sir, 2026-11-14] -----------------------------------------------------
+# Killing a burning enemy: +2% max HP and +2% max MP. Rebirth arms after 20 kills
+# this run (the counter clears when used). Armed, a lethal hit revives the player
+# in place at full HP (MP unchanged), 2 s invulnerable, with a 200% Magic Pow
+# blast + Burn that knocks everything within 20 m out to 20 m.
+const RISE := {"heal": 0.02, "arm_kills": 20, "invuln_s": 2.0, "blast_r": 20.0, "burn_s": 5.0}
+var rise_kills := 0
+var rise_revives := 0
+
+func rise_equipped() -> bool:
+	if addicted(): return false
+	var pg: Resource = loadout.get("passive")
+	return pg != null and String(pg.id) == "rise_of_the_phoenix" and pg.rank_ok(rank())
+
+func rise_armed() -> bool:
+	return rise_equipped() and rise_kills >= int(RISE.arm_kills)
+
+func on_enemy_killed(was_burning: bool, now: float) -> void:
+	if not rise_equipped(): return
+	if rise_kills < int(RISE.arm_kills): rise_kills += 1
+	if was_burning and spell_busy() != "flight":
+		var h: Node = world.player.health
+		if not h.dead: h.hp = minf(h.max_hp, h.hp + h.max_hp * float(RISE.heal))
+		mp = minf(max_mp(now), mp + max_mp(now) * float(RISE.heal))
+
+# Health.death_guard: armed, the lethal hit becomes a rebirth.
+func rise_guard(_packet: RefCounted) -> bool:
+	if not rise_armed(): return false
+	var now: float = world.session.run.time
+	var h: Node = world.player.health
+	h.hp = h.max_hp
+	h.grant_immunity(now + float(RISE.invuln_s), ["*"], -INF, "rise")
+	rise_kills = 0
+	rise_revives += 1
+	var pg: Resource = loadout.get("passive")
+	if world.get("spells") != null:
+		world.spells.blast(world.player.global_position, float(RISE.blast_r), _pow(now) * pg.damage_pct, pg.effect_id, float(RISE.burn_s), float(RISE.blast_r), now, "rise")
+	if world.get("sfx") != null: world.sfx.play("rebirth", world.player.global_position)
+	if world.has_method("show_notice"): world.show_notice("Rise of the Phoenix: reborn!", 2.0)
+	return true
+
+func rise_label() -> String:
+	return "Armed" if rise_armed() else "%d/%d" % [rise_kills, int(RISE.arm_kills)]
 
 func _sage_arts(delta: float, now: float) -> void:
 	if not sage_active(now): return
@@ -370,6 +434,8 @@ func cast_basic(now: float) -> Dictionary:
 	dir = dir.normalized() if dir.length() > 0.5 else aim_dir()
 	basic_casts += 1
 	_pose("basic", now)
+	if String(page.id) == "heads_or_tails": # Heads: one coin at one enemy
+		return world.gambler.throw("heads", origin, dir, _pow(now) * page.damage_pct, _pow(now), null, now)
 	var shot: Dictionary = world.projectiles.launch("basic", origin, dir, {"damage": _pow(now) * page.damage_pct,
 		"effect": page.effect_id, "effect_s": page.effect_s, "pow": _pow(now)})
 	if prof != null: _prof("cast.launch", t0)
@@ -377,13 +443,16 @@ func cast_basic(now: float) -> Dictionary:
 
 func cast_special(now: float) -> Dictionary:
 	var origin := hand_origin()
-	var aim := crosshair_point(world.projectiles.KINDS.special.range)
+	var coin := String(page.id) == "heads_or_tails"
+	var aim := crosshair_point(world.gambler.GIANT.range if coin else world.projectiles.KINDS.special.range)
 	var dir: Vector3 = (aim.point - origin)
 	dir = dir.normalized() if dir.length() > 0.5 else aim_dir()
 	special_casts += 1
 	special_ready = now + stats().cooldown(page.special_cooldown_s, page.mastery_applies, now)
 	_special_full = special_ready - now
 	_pose("special", now)
+	if coin: # Tails: the giant coin
+		return world.gambler.throw("tails", origin, dir, _pow(now) * page.special_damage_pct, _pow(now), aim.point, now)
 	return world.projectiles.launch("special", origin, dir, {"damage": _pow(now) * page.special_damage_pct,
 		"effect": page.effect_id, "effect_s": page.special_effect_s, "pow": _pow(now), "target_point": aim.point})
 
@@ -402,6 +471,9 @@ func _notify(result: String, slot: String) -> void:
 		"rank": world.show_notice("%s needs rank %s" % [loadout[slot].title, loadout[slot].rank_req], 1.5)
 		"no_target": world.show_notice("No enemy in sight to lock on to", 1.2)
 		"mp_full": world.show_notice("%s needs full MP" % loadout[slot].title, 1.2)
+		"airborne": world.show_notice("%s must be cast from the ground" % loadout[slot].title, 1.2)
+		"addicted": world.show_notice("Gambling Addiction: only Let it Ride", 1.2)
+		"rolling": world.show_notice("The die is still rolling", 0.8)
 
 # Special cooldown left as a fraction (0 = ready), for the crosshair ring.
 func special_fraction(now: float) -> float:
@@ -420,13 +492,17 @@ func slot_view(now: float) -> Dictionary:
 		var b_left := maxf(0.0, next_basic - now)
 		out.basic = {"id": String(page.id), "title": "Basic", "state": "cooldown" if b_left > 0.0 else "ready", "cd_frac": clampf(b_left / maxf(iv, 1e-6), 0.0, 1.0), "cd_s": b_left}
 		out.special = {"id": String(page.id), "title": "Special", "state": "cooldown" if special_remaining(now) > 0.0 else "ready", "cd_frac": special_fraction(now), "cd_s": special_remaining(now)}
+		if addicted():
+			out.basic.state = "addicted"
+			out.special.state = "addicted"
 	for slot in ["skill_1", "skill_2", "spell_1", "spell_2", "spell_3", "passive"]:
 		var pg: Resource = loadout.get(slot)
 		if pg == null:
 			out[slot] = {"state": "empty"}
 			continue
 		var st := "ready"
-		if not pg.rank_ok(rank()): st = "locked"
+		if addicted() and String(pg.id) != "let_it_ride": st = "addicted"
+		elif not pg.rank_ok(rank()): st = "locked"
 		elif remaining(slot, now) > 0.0 and remaining(slot, now) < INF: st = "cooldown"
 		elif remaining(slot, now) == INF: st = "channel" # Explosion charging
 		elif pg.kind == AbilityPage.Kind.SPELL and mp < pg.mp_cost and not free_casting(): st = "mp"

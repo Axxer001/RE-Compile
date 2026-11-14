@@ -9,6 +9,8 @@ extends Node3D
 #   - A dummy yard in the south-west: training dummies that never die and take
 #     no damage, but show every hit as a damage number and a running total.
 #     Some stand on platforms, some strafe.
+#   - An AoE cluster [Sir, 2026-11-14]: 13 still dummies packed 2 m apart (a
+#     centre and two rings, 8 m across) north of the arrival pad, for blasts.
 #   - A target range in the south-east: boards at 10, 20, 30, 50 and 80 m from a
 #     firing line; a hit flashes the board and counts.
 #   - The return portal behind the arrival pad.
@@ -49,6 +51,17 @@ const DUMMIES := [
 	[85, 145, 0, 0], [85, 175, 0, 0], [15, 175, 0, 0],
 ]
 const STRAFE_SPEED := 2.5
+# The AoE cluster (local): a centre dummy, 6 at 2 m and 6 at 4 m (hex packed, 2 m apart).
+const CLUSTER_AT := Vector3(101, 0, 155)
+const CLUSTER_RINGS := [[1, 0.0], [6, 2.0], [6, 4.0]] # [count, radius]
+
+static func cluster_spots() -> Array:
+	var out := []
+	for ring in CLUSTER_RINGS:
+		for k in int(ring[0]):
+			var a: float = TAU * float(k) / float(ring[0]) + (PI / 6.0 if float(ring[1]) > 3.0 else 0.0)
+			out.append(CLUSTER_AT + Vector3(cos(a), 0, sin(a)) * float(ring[1]))
+	return out
 # Target range: boards at these distances from the firing line (local z 190), three per distance.
 const RANGE_LINE_Z := 190.0
 const RANGE_X := [125.0, 150.0, 175.0]
@@ -137,6 +150,7 @@ func _ground() -> void:
 	_solid(field, Vector3(150, 0.02, RANGE_LINE_Z), Vector3(80, 0.04, 0.4), line, "firing_line", false)
 	_label(field, "TARGET RANGE", Vector3(150, 2.6, RANGE_LINE_Z + 1.5), 0.014)
 	_label(field, "TRAINING DUMMIES", Vector3(50, 3.2, 180), 0.014)
+	_label(field, "AOE CLUSTER", CLUSTER_AT + Vector3(0, 3.6, 5.5), 0.014)
 	_label(field, "MOVEMENT DRILLS", Vector3(65, 4.5, 92), 0.016)
 	_label(field, "ROCK FORMATIONS", Vector3(165, 4.5, 8), 0.016)
 
@@ -195,6 +209,12 @@ func _dummy_yard() -> void:
 		var h: float = d[2]
 		if h > 0.0: _solid(field, Vector3(d[0], h * 0.5, d[1]), Vector3(3, h, 3), plat, "dummy_platform_%d" % i)
 		dummies.append(_dummy(i, Vector3(d[0], h, d[1]), float(d[3])))
+	var n0 := DUMMIES.size()
+	var spots := cluster_spots()
+	for k in spots.size():
+		var cd := _dummy(n0 + k, spots[k], 0.0)
+		cd["cluster"] = true
+		dummies.append(cd)
 
 func _dummy(i: int, local_at: Vector3, strafe: float) -> Dictionary:
 	var body := StaticBody3D.new()
@@ -509,6 +529,15 @@ func _on_hit(_packet: RefCounted, applied: float, t: Dictionary) -> void:
 
 static func _fmt(v: float) -> String:
 	return ("%.0f" % v) if v >= 10.0 else ("%.1f" % v)
+
+# A dummy's effect icons, over its running total [2026-11-14]: the same row as a Sprite's.
+const StatusIcons = preload("res://scripts/ui/status_icons.gd")
+const STATUS_Y := 2.75
+func set_statuses(d: Dictionary, list: Array) -> void:
+	var ids: Array = list.map(func(x): return x.id)
+	if ids == d.get("status_ids", []): return
+	d["status_ids"] = ids
+	d["status_row"] = StatusIcons.update_row(d.body, d.get("status_row"), ids, STATUS_Y)
 
 func tick(delta: float, now: float) -> void:
 	if not active: return

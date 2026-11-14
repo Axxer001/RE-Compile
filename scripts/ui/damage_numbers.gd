@@ -60,6 +60,7 @@ func spawn(at: Vector3, amount: float, kind := "direct", target := "") -> void:
 	n.target = target
 	l.text = _fmt(amount)
 	l.modulate = COLORS.get(kind, COLORS.direct)
+	l.transparency = 0.0
 	l.font_size = SIZES.get(kind, SIZES.direct)
 	l.position = at
 	l.visible = true
@@ -75,7 +76,7 @@ func tick(delta: float) -> void:
 		var u: float = clampf(n.t / LIFE_S, 0.0, 1.0)
 		var l: Label3D = n.label
 		l.position = n.start + Vector3(0, RISE_M * u, 0) + n.drift * u
-		l.modulate.a = 1.0 - u * u
+		l.transparency = u * u # fades without a Label3D rebuild (modulate rebuilt the text mesh every frame) [perf 2026-11-14]
 		if n.t >= LIFE_S:
 			l.visible = false
 			_live.erase(n)

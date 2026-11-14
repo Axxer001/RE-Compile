@@ -17,6 +17,27 @@ const DEFS := {
 		"text": "+{pow}% Magic Pow, +{mastery}% Spell Mastery, +{atk}% Atk Spd."},
 	"Concuss": {"name": "Concussed", "kind": "debuff",
 		"text": "Mov Spd and Atk Spd -{pct}% (a Blighted Sprite's pounce)."},
+	"Phoenix Concuss": {"name": "Concussed", "kind": "debuff",
+		"text": "Pulled down by the Phoenix: Mov Spd and Atk Spd -80%."},
+	"Rise of the Phoenix": {"name": "Rise of the Phoenix", "kind": "buff",
+		"text": "Burning kills restore 2% max HP and MP. Rebirth: {state}."},
+	# The Gambler set [2026-11-14]
+	"Pocket Change": {"name": "Pocket Change", "kind": "debuff",
+		"text": "A Heads coin that hits this enemy bounces on to another with Pocket Change within 10 m."},
+	"Heavy Pockets": {"name": "Heavy Pockets", "kind": "debuff",
+		"text": "Weighed down by spilled coins: Mov Spd -{slow}%, easing off over 10 seconds."},
+	"Gambler's High": {"name": "Gambler's High", "kind": "buff",
+		"text": "+100% Magic Pow, +30% Atk Spd, +30% Mov Spd, +20% Spell Mastery."},
+	"Jackpot": {"name": "I JUST HIT THE JACKPOT!", "kind": "buff",
+		"text": "+500% Magic Pow, +100% Atk Spd, +100% Mov Spd, +100% Spell Mastery."},
+	"All In": {"name": "All In", "kind": "buff",
+		"text": "Invincible. When it ends: with any buff active, every lost HP returns and +200% Magic Pow for 10 s; without, -70% Mov Spd and Atk Spd for 5 s."},
+	"All In: Won": {"name": "All In: Won", "kind": "buff", "text": "+200% Magic Pow."},
+	"All In: Bust": {"name": "All In: Bust", "kind": "debuff", "text": "-70% Mov Spd and Atk Spd."},
+	"Gambling Addiction": {"name": "Gambling Addiction", "kind": "debuff",
+		"text": "Only Let it Ride works: no other attack, skill, spell or passive. Magic Pow x0.1, Mov Spd +50%. Roll above 3 twice to break free ({state})."},
+	"Where are my Coins?": {"name": "Where are my Coins?", "kind": "buff",
+		"text": "Coins: {coins}/10. At 10, any buff spills them: enemies within 30 m get Heavy Pockets."},
 	"Sage Arts": {"name": "Sage Arts", "kind": "buff",
 		"text": "Out of combat: +{hp}% max HP and +{mp}% max MP every second."},
 }
@@ -36,10 +57,12 @@ static func kind_of(effect_id: String) -> String:
 	return String(DEFS.get(effect_id, {}).get("kind", "debuff"))
 
 var active := {}   # target_id -> {effect_id -> {until, next_tick, source, pow, serial}}
+var buff_blocked := {} # target_id -> true: buffs are refused (Gambling Addiction on "player")
 var _serial := 0
 
-# Returns "applied" (new) or "refreshed".
+# Returns "applied" (new), "refreshed" or "blocked" (a buff on a target that refuses buffs).
 func apply(target_id: String, effect_id: String, duration_s: float, now: float, source := "", magic_pow := 100.0) -> String:
+	if buff_blocked.has(target_id) and kind_of(effect_id) == "buff": return "blocked"
 	var per: Dictionary = active.get(target_id, {})
 	active[target_id] = per
 	if per.has(effect_id):

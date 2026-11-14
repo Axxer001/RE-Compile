@@ -26,6 +26,7 @@ const Validator = preload("res://scripts/core/code_order_validator.gd")
 const ChantEngine = preload("res://scripts/core/chant_engine.gd")
 const ProjectileService = preload("res://scripts/combat/projectile_service.gd")
 const SpellService = preload("res://scripts/combat/spell_service.gd")
+const GamblerService = preload("res://scripts/combat/gambler_service.gd")
 const EffectSystem = preload("res://scripts/core/effect_system.gd")
 const PageLibrary = preload("res://scripts/core/page_library.gd")
 const STAT_LABELS := {"max_hp": "Max HP", "max_mp": "Max MP", "magic_pow": "Magic Pow", "mov_spd": "Mov Spd", "atk_spd": "Atk Spd", "spell_mastery": "Spell Mastery"}
@@ -34,7 +35,9 @@ const SLOT_KEYS := {"attack": "LMB", "skill_1": "E", "skill_2": "Q", "spell_1": 
 const LOADOUT_ROWS := [["I", "Attack", ["attack"]], ["II", "Skills", ["skill_1", "skill_2"]], ["III", "Spells", ["spell_1", "spell_2", "spell_3"]], ["IV", "Passive", ["passive"]]]
 const KIND_SECTIONS := [[0, "Attacks"], [1, "Skills"], [2, "Spells"], [3, "Passives"]] # AbilityPage.Kind order
 const PAGE_ICONS := {"scorch_and_burn": "debuff_shadow_burn.png", "cultivate": "buff_focus.png", "ring_of_fire": "buff_magic_orb.png", "quick_step": "buff_speed.png", "sage_arts": "buff_regen_potion.png",
-	"dragons_breath": "buff_energy_burst.png", "firefly": "buff_luck.png", "explosion": "buff_strength.png"}
+	"dragons_breath": "buff_energy_burst.png", "firefly": "buff_luck.png", "explosion": "buff_strength.png",
+	"flight_of_the_phoenix": "buff_levelup.png", "call_of_the_phoenix": "debuff_poison_cloud.png", "rise_of_the_phoenix": "buff_guardian_spirit.png",
+	"heads_or_tails": "buff_luck.png", "where_are_my_coins": "debuff_curse.png", "let_it_ride": "debuff_confusion.png", "all_in": "buff_nature_shield.png"}
 const ICON_DIR := "res://assets/akami/buff_debuff_vol1/"
 const HINT_S := 10.0           # a chant's hint unlocks after this long [Sir]
 const WIDTH := 1500.0          # the book
@@ -398,7 +401,7 @@ func start_chant(stat: String) -> Dictionary:
 		refresh()
 		return {}
 	if not st.can_rise(stat): # a capped stat refuses before the chant starts [R9]
-		status_text = "That stat cannot rise further."
+		status_text = "Gambling Addiction: nothing can raise your stats now." if st.buff_block else "That stat cannot rise further."
 		refresh()
 		return {}
 	tab = "player_id"
@@ -508,7 +511,7 @@ func page_text(id: String) -> String:
 	var code: Array = pg.code_lines
 	for i in code.size(): lines.append("%02d: %s" % [i + 1, code[i]])
 	lines.append("")
-	lines.append("Lesson: " + pg.lesson)
+	lines.append("Lesson: " + pg.lesson.replace("`", ""))
 	lines.append("Tip: " + pg.hints)
 	return "\n".join(lines)
 
@@ -578,6 +581,56 @@ func page_stats(id: String) -> Array:
 			rows.append(["Charge", "%s s: no moving, looking or acting; any hit breaks it" % _n(X.charge_s)])
 			rows.append(["MP cost", "all of it (needs full MP)"])
 			rows.append(["Cooldown", "%.1f s, from when the charge ends" % st.cooldown(pg.cooldown_s, pg.mastery_applies, now)])
+		"flight_of_the_phoenix":
+			var F2: Dictionary = SpellService.FLIGHT
+			rows.append(["Pull", "enemies within %s m to you, Concussed %s s (-80%% move and attack speed)" % [_n(F2.pull_r), _n(F2.concuss_s)]])
+			rows.append(["Climb", "%s m over %s s, then %s s at the peak to choose" % [_n(F2.height), _n(F2.climb_s), _n(F2.window_s)]])
+			rows.append(["Dive damage", "%s (100%%) up to 2 s of climb, rising to %s (500%%) at the peak" % [_n(pow), _n(pow * 5.0)]])
+			rows.append(["Impact", "%s m radius, Burn %s s, knocks back to %s m" % [_n(F2.impact_r), _n(F2.burn_s), _n(F2.knock_to)]])
+			rows.append(["Landing", "LMB on ground inside the %s m ring; none chosen: back to the start" % _n(F2.ring_r)])
+			rows.append(["MP cost", "%d" % roundi(pg.mp_cost)])
+			rows.append(["Cooldown", "%.1f s" % st.cooldown(pg.cooldown_s, pg.mastery_applies, now)])
+		"call_of_the_phoenix":
+			var C2: Dictionary = SpellService.CALL
+			rows.append(["Areas", "up to %d, %s m across, on the ground within %s m (LMB)" % [C2.areas, _n(C2.area_r * 2.0), _n(C2.reach)]])
+			rows.append(["Rain", "%d fireballs per area over %s s" % [C2.per_area, _n(C2.rain_s)]])
+			rows.append(["Each fireball", "%s damage (%d%% of Magic Pow), %s m blast, Burn %s s" % [_n(pow * pg.damage_pct), roundi(pg.damage_pct * 100.0), _n(ProjectileService.KINDS.basic.aoe), _n(C2.burn_s)]])
+			rows.append(["Casting", "%s s, held in place; ends early at the third area" % _n(C2.cast_s)])
+			rows.append(["MP cost", "%d" % roundi(pg.mp_cost)])
+			rows.append(["Cooldown", "%.1f s" % st.cooldown(pg.cooldown_s, pg.mastery_applies, now)])
+		"rise_of_the_phoenix":
+			var R2: Dictionary = pc.RISE
+			rows.append(["Burning kill", "+%d%% max HP and +%d%% max MP" % [roundi(R2.heal * 100.0), roundi(R2.heal * 100.0)]])
+			rows.append(["Rebirth", "after %d kills this run (now %s)" % [R2.arm_kills, pc.rise_label()]])
+			rows.append(["On rising", "full HP, %s s invulnerable, a %s (200%%) blast that knocks back to %s m" % [_n(R2.invuln_s), _n(pow * pg.damage_pct), _n(R2.blast_r)]])
+		"heads_or_tails":
+			var GC: Dictionary = GamblerService.COIN
+			var GG: Dictionary = GamblerService.GIANT
+			rows.append(["Heads (LMB)", "%s damage (%d%% of Magic Pow) to one enemy, %s m at %s m/s" % [_n(pow * pg.damage_pct), roundi(pg.damage_pct * 100.0), _n(GC.range), _n(GC.speed)]])
+			rows.append(["Tails (RMB)", "%s damage (%d%%) in a %s m radius, Pocket Change %s s" % [_n(pow * pg.special_damage_pct), roundi(pg.special_damage_pct * 100.0), _n(GG.aoe), _n(pg.special_effect_s)]])
+			rows.append(["Pocket Change", "Heads bounces to another marked enemy within %s m, up to %d times, +%d%% each (110/120/130%%)" % [_n(GC.bounce_r), GC.bounces, roundi(GC.bounce_step * 100.0)]])
+			rows.append(["Fire rate", "%.1f coins/s (Atk Spd)" % st.value("atk_spd", now)])
+			rows.append(["Tails cooldown", "%.1f s" % st.cooldown(pg.special_cooldown_s, pg.mastery_applies, now)])
+		"where_are_my_coins":
+			var GP: Dictionary = GamblerService.PURSE
+			rows.append(["Coins", "+1 a kill, %d at most (now %d); none while any enemy has Heavy Pockets" % [GP.max, world.gambler.purse]])
+			rows.append(["Spill", "at %d coins, any buff spends them all" % GP.max])
+			rows.append(["Heavy Pockets", "every enemy within %s m: -%d%% Mov Spd, easing to 0 over %s s" % [_n(GP.spill_r), roundi(GP.slow * 100.0), _n(GP.heavy_s)]])
+		"let_it_ride":
+			var GL: Dictionary = GamblerService.LET
+			rows.append(["1-3", "every buff ends; the next cooldown is %s s. Two in a row: Gambling Addiction" % _n(GL.cd_low)])
+			rows.append(["4-5", "Gambler's High %s s: +100%% Pow, +30%% Atk Spd and Mov Spd, +20%% Mastery" % _n(GL.high_s)])
+			rows.append(["6", "the Jackpot %s s: +500%% Pow, +100%% Atk Spd, Mov Spd and Mastery" % _n(GL.jackpot_s)])
+			rows.append(["Addiction", "only Let it Ride (no cooldown, no stats); Pow x0.1, Mov Spd +50%%; ends after %d rolls above 3" % GL.addict_rolls])
+			rows.append(["MP cost", "0"])
+			rows.append(["Cooldown", "%s s" % _n(GL.cd)])
+		"all_in":
+			var GA: Dictionary = GamblerService.ALL_IN
+			rows.append(["Stake", "%d%% of your current HP; Invincible for %s s" % [roundi(GA.hp_cost * 100.0), _n(GA.invuln_s)]])
+			rows.append(["Win (a buff active as it ends)", "every lost HP back, +200%% Magic Pow (to %s) for %s s" % [_n(pow * GA.win_pow), _n(GA.win_s)]])
+			rows.append(["Bust (no buff)", "-%d%% Mov Spd and Atk Spd for %s s" % [roundi((1.0 - GA.bust_mult) * 100.0), _n(GA.bust_s)]])
+			rows.append(["MP cost", "0"])
+			rows.append(["Cooldown", "%s s" % _n(pg.cooldown_s)])
 	return rows
 
 func assembly_lines() -> Array:
@@ -648,6 +701,36 @@ func _panel(parent: Control, style: StyleBox, min_size := Vector2.ZERO) -> Panel
 	p.custom_minimum_size = min_size
 	parent.add_child(p)
 	return p
+
+# The lesson [Sir, 2026-11-14]: its title ("C++ Variables") as a heading, then
+# the text with every `code` span in the code font, so the breakdown reads
+# against the incantation above it.
+func _lesson(parent: Control, text: String) -> RichTextLabel:
+	var cut := text.find(":")
+	var head := text.substr(0, cut) if cut > 0 else "Lesson"
+	var body := text.substr(cut + 1).strip_edges() if cut > 0 else text
+	_text(parent, "Lesson: " + head, 18, INK, serif_bold).name = "LessonHead"
+	var r := RichTextLabel.new()
+	r.name = "Lesson"
+	r.bbcode_enabled = true
+	r.fit_content = true
+	r.scroll_active = false
+	r.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	r.custom_minimum_size.x = PAGE_W - 60
+	r.add_theme_font_override("normal_font", serif)
+	r.add_theme_font_override("mono_font", mono)
+	r.add_theme_font_size_override("normal_font_size", 16)
+	r.add_theme_font_size_override("mono_font_size", 14)
+	r.add_theme_color_override("default_color", INK)
+	r.add_theme_constant_override("line_separation", 3)
+	if body.length() > 0: body = body.left(1).to_upper() + body.substr(1)
+	var esc := body.replace("[", "[lb]")
+	var parts := esc.split("`")
+	var out := ""
+	for i in parts.size(): out += ("[color=#5a2a12][code]%s[/code][/color]" % parts[i]) if i % 2 == 1 else parts[i]
+	r.text = out
+	parent.add_child(r)
+	return r
 
 func _text(parent: Control, text: String, size: int, color: Color, font: Font = null, align := HORIZONTAL_ALIGNMENT_LEFT, wrap_w := 0.0) -> Label:
 	var l := Label.new()
@@ -1045,7 +1128,7 @@ func _right_page(col: VBoxContainer) -> void:
 	var cl := _text(code, code_lines, 13, Color("2c2418"), mono)
 	cl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY # long lines wrap: the page never widens
 	cl.custom_minimum_size.x = PAGE_W - 100
-	_text(col, "Lesson: " + pg.lesson, 15, INK, serif, HORIZONTAL_ALIGNMENT_LEFT, PAGE_W - 60)
+	_lesson(col, pg.lesson)
 	_text(col, "Tip: " + pg.hints, 15, INK_SOFT, serif, HORIZONTAL_ALIGNMENT_LEFT, PAGE_W - 70)
 	_page_footer(outer)
 

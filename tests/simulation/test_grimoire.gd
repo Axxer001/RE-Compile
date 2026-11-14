@@ -39,7 +39,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	c.park_enemies()
 	var g: RefCounted = s.grimoire
 	var gp: CanvasLayer = c.grimoire_panel
-	check.call(g.listed() == ["scorch_and_burn", "cultivate", "dragons_breath", "firefly", "explosion"] and g.is_unlocked("cultivate") and g.is_unlocked("explosion") and not g.is_found("quick_step"), "fresh profile: Scorch and Burn, Cultivate and the three Rank E spells known and unlocked (spells for testing [Sir]); the other pages unseen")
+	check.call(g.listed() == ["scorch_and_burn", "cultivate", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix", "heads_or_tails", "where_are_my_coins", "let_it_ride", "all_in"] and g.is_unlocked("cultivate") and g.is_unlocked("explosion") and not g.is_found("quick_step"), "fresh profile: Scorch and Burn, Cultivate and the three Rank E spells known and unlocked (spells for testing [Sir]); the other pages unseen")
 
 	# ---- banks and validator -------------------------------------------------------------
 	var banks_ok := true

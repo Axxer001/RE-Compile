@@ -13,6 +13,11 @@ extends RefCounted
 #   6 user input (cin >>)                   Firefly                      + Firefly
 #   7 data types (int float double bool char string auto)
 #                                           Explosion                    + Explosion
+#   8 operators / 9 strings / 10 math       the three Phoenix pages      + each page
+#  11 booleans (bool true false == != < >)  Heads or Tails               + Heads or Tails
+#  12 if / else (if else && || !)           Where are my Coins?          + Where are my Coins?
+#  13 switch (switch case break default)    Let it Ride                  + Let it Ride
+#  14 while loops (while do)                All In                       + All In
 # Tier 1 draws only from its pages that are unlocked (Cultivate's code once Cultivate is).
 # Difficulty per stat [handoff §6]: level = successful chants on that stat
 # (kept in the profile); tier = min(1 + level / 2, the highest tier the
@@ -28,11 +33,20 @@ const TIER_PAGES := {1: ["scorch_and_burn"], 2: ["scorch_and_burn", "ring_of_fir
 	4: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts"],
 	5: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath"],
 	6: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly"],
-	7: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion"]}
+	7: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion"],
+	8: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix"],
+	9: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix"],
+	10: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix"],
+	11: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix", "heads_or_tails"],
+	12: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix", "heads_or_tails", "where_are_my_coins"],
+	13: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix", "heads_or_tails", "where_are_my_coins", "let_it_ride"],
+	14: ["scorch_and_burn", "ring_of_fire", "quick_step", "sage_arts", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix", "heads_or_tails", "where_are_my_coins", "let_it_ride", "all_in"]}
 const TIER_SOURCE := {1: ["scorch_and_burn", "cultivate"], 2: ["ring_of_fire"], 3: ["quick_step"], 4: ["sage_arts"],
-	5: ["dragons_breath"], 6: ["firefly"], 7: ["explosion"]}
+	5: ["dragons_breath"], 6: ["firefly"], 7: ["explosion"], 8: ["flight_of_the_phoenix"], 9: ["call_of_the_phoenix"], 10: ["rise_of_the_phoenix"],
+	11: ["heads_or_tails"], 12: ["where_are_my_coins"], 13: ["let_it_ride"], 14: ["all_in"]}
 const TIER_NAMES := {1: "program structure", 2: "syntax: ; { } and namespace", 3: "output: cout << endl", 4: "comments",
-	5: "variables: types and =", 6: "user input: cin >>", 7: "data types"}
+	5: "variables: types and =", 6: "user input: cin >>", 7: "data types", 8: "operators", 9: "strings", 10: "math functions",
+	11: "booleans: bool, true/false, comparisons", 12: "if / else", 13: "switch / case", 14: "while loops"}
 # The tier whose blanks are variable names (they must be readable from the rest
 # of the snippet). None yet: C++ variables arrive with a later page's lesson.
 const VAR_TIER := -1
@@ -45,6 +59,13 @@ const PATTERNS := {
 	5: "\\b(const)\\b(?=\\s+\\w+\\s+\\w+\\s*=)|\\b(int|double|string)\\b(?=\\s+[A-Za-z_]\\w*\\s*=)|\\s(=)\\s",
 	6: "\\b(cin)\\b|(>>)",
 	7: "\\b(int|float|double|bool|char|string|auto)\\b(?=\\s+[A-Za-z_]\\w*\\s*=)",
+	8: "\\s([-+*/%])\\s|(\\+\\+|--)(?=;)|\\s([-+*/]=)\\s",
+	9: "\\b(string)\\b(?=\\s+[A-Za-z_])|\\.(length)\\b|<(string)>|\\s(\\+=?)\\s",
+	10: "\\b(max|min|sqrt|pow|round)\\b(?=\\()|<(cmath)>",
+	11: "\\b(bool|true|false|boolalpha)\\b|\\s(==|!=|<=|>=)\\s|\\s([<>])\\s",
+	12: "\\b(if|else)\\b|(&&|\\|\\|)|(!)(?=[A-Za-z_(])",
+	13: "\\b(switch|case|break|default)\\b",
+	14: "\\b(while|do)\\b",
 }
 const PLATEAU_HINT := "Unlock more pages to deepen your chants."
 

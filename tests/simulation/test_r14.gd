@@ -90,6 +90,26 @@ static func run(check: Callable, c: Node3D) -> void:
 	steps(c, 0.6)
 	var quiet: bool = not sh.embers.visible and sh.embers.find_children("*", "GPUParticles3D", true, false).all(func(g): return not g.emitting)
 	check.call(off0 and on and not sh.burning and quiet and is_equal_approx(sh._skin.emission_energy_multiplier, sh._skin_energy), "Burn on an enemy: Binbun flames on the body and a faint glow (<= 30%), gone the moment Burn ends [R14, Phase 2]")
+	# Only the nearest burning Sprites wear the flames; the rest glow and flicker [perf, 2026-11-14].
+	var keep_full: int = c.vfx.embers_full
+	c.vfx.embers_full = 1
+	var sh2: CharacterBody3D = c.enemies["sprite_2"] # a second, farther Sprite (parked ones are hidden)
+	sh2.visible = true
+	sh2.reset_to(sh.global_position + Vector3(0, 0, 12), 0.0)
+	var all_ids: Array = ["sprite_1", "sprite_2"]
+	for id in all_ids: c.effects.apply(id, "Burn", 5.0, s.run.time, "player", 100.0)
+	c.publish(DT)
+	var eye: Vector3 = c.get_viewport().get_camera_3d().global_position
+	var by_near: Array = all_ids.map(func(id): return c.enemies[id])
+	by_near.sort_custom(func(a, b): return eye.distance_squared_to(a.global_position) < eye.distance_squared_to(b.global_position))
+	var full_n: int = by_near.filter(func(e): return e.burn_full and e.embers != null and e.embers.visible).size()
+	var rest_ok: bool = by_near.slice(1).all(func(e): return e.burning and not e.burn_full and (e.embers == null or not e.embers.visible) and e._skin.emission_energy_multiplier > 0.0 and e._skin.emission_energy_multiplier <= 0.3 + 1e-6)
+	check.call(by_near.size() >= 2 and full_n == 1 and by_near[0].burn_full and rest_ok, "of %d burning Sprites only the nearest wears the flames; the rest glow (<= 30%%), flickering" % by_near.size())
+	for id in all_ids: c.effects.clear_target(id)
+	c.publish(DT)
+	check.call(by_near.all(func(e): return not e.burning and is_equal_approx(e._skin.emission_energy_multiplier, e._skin_energy)), "Burn's end puts every Sprite's glow back")
+	c.vfx.embers_full = keep_full
+	sh2.visible = false
 
 	# ---- damage numbers --------------------------------------------------------------------------
 	var dn: Node3D = c.damage_numbers

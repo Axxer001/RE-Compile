@@ -6,3 +6,10 @@ required), checked 2026-11-14. The downloaded folder (PortalVFX) carried no lice
 RE:Compile change: its shaders include assets/BinbunVFX_Vol2/pixel_fx.gdshaderinc
 (effect time stepped at 12 FPS).
 https://creativecommons.org/publicdomain/zero/1.0/
+
+Loot VFX - Godot 3D (free "Loot VFX" file) by Binbun (binbun3d.itch.io): loot_effects/,
+shared/script/, shared/shader/util/, shared/texture/icon/.
+License: Creative Commons Zero v1.0 Universal (CC0), per https://binbun3d.itch.io/loot-vfx
+("Asset license: Creative Commons Zero v1.0 Universal"), checked 2026-11-14. The downloaded
+folder (GodotLootVFX) carried no licence file.
+RE:Compile change: its 4 shaders include assets/BinbunVFX_Vol2/pixel_fx.gdshaderinc (12 FPS).

@@ -56,6 +56,9 @@ func run(c: Node3D) -> void:
 	await preload("res://tests/simulation/test_player_body.gd").run(check, c)
 	preload("res://tests/simulation/test_target_along.gd").run(check, c)
 	await preload("res://tests/simulation/test_spells.gd").run(check, c)
+	await preload("res://tests/simulation/test_phoenix.gd").run(check, c)
+	await preload("res://tests/simulation/test_gambler.gd").run(check, c)
+	await preload("res://tests/simulation/test_status_stack.gd").run(check, c)
 	# The Dark Forest: the game world, built as the game builds it.
 	c.queue_free()
 	await physics_frame
@@ -66,6 +69,7 @@ func run(c: Node3D) -> void:
 	await physics_frame
 	await preload("res://tests/simulation/test_forest.gd").run(check, forest)
 	await preload("res://tests/simulation/test_training.gd").run(check, forest)
+	await preload("res://tests/simulation/test_status_stack.gd").run_dummies(check, forest)
 	await preload("res://tests/simulation/test_graphics.gd").run(check, forest)
 	if fixture == "fail":
 		check(false, "injected fixture failure")

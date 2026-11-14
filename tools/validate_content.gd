@@ -96,13 +96,14 @@ func validate_pages() -> void:
 			var ls: Array = v.lines
 			if not String(ls[0]).begins_with("#include") or not "int main() {" in ls or String(ls[ls.size() - 1]) != "}" or not ls.any(func(l): return String(l).strip_edges() == "return 0;"): cpp_ok = false
 			for l in ls:
+				if RegEx.create_from_string("^\\s*(case\\s.+|default):\\s*$").search(String(l)) != null: continue # C++ switch labels end in a colon
 				if RegEx.create_from_string("^\\s*(def|class|elif|import)\\b|:\\s*$|\\bprint\\(").search(String(l)) != null: py_left.append(l)
 		check(cpp_ok and py_left.is_empty(), "page %s: every variant is a C++ program (#include ... int main() { ... return 0; }), no Python %s" % [id, str(py_left.slice(0, 2))])
 	# One beginner C++ lesson per page, in course order.
 	var order_ok := true
 	for i in Lib.IDS.size():
 		if not String(Lib.TEACH[Lib.IDS[i]][0]).begins_with(Lib.LESSONS[i] + ":"): order_ok = false
-	check(order_ok and Lib.LESSONS == ["C++ Intro", "C++ Get Started", "C++ Syntax", "C++ Output", "C++ Comments", "C++ Variables", "C++ User Input", "C++ Data Types"], "pages teach C++ in course order: %s" % ", ".join(Lib.LESSONS))
+	check(order_ok and Lib.LESSONS == ["C++ Intro", "C++ Get Started", "C++ Syntax", "C++ Output", "C++ Comments", "C++ Variables", "C++ User Input", "C++ Data Types", "C++ Operators", "C++ Strings", "C++ Math", "C++ Booleans", "C++ If...Else", "C++ Switch", "C++ While Loop"], "pages teach C++ in course order: %s" % ", ".join(Lib.LESSONS))
 
 func validate_project() -> void:
 	check(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/main.tscn", "main scene is scenes/main.tscn")

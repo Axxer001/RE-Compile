@@ -21,6 +21,12 @@ var chant_points := {}   # stat -> successful chants (refunded as 1 point each o
 var chant_gain := {}     # stat -> total flat gain from those chants (tier-dependent [R10])
 var unspent := 0
 var modifiers: Array = []  # {id, stat, mul, flat, until}
+# Gambling Addiction [Sir, 2026-11-14]: while set, no buff of any source lands:
+# a modifier that raises a stat is refused (BUFF_BLOCK_EXEMPT excepted) and a
+# chant gains nothing.
+var buff_block := false
+const BUFF_BLOCK_EXEMPT := ["addiction"]
+var buffs_refused := 0
 
 func _init() -> void:
 	for s in STATS:
@@ -57,11 +63,13 @@ func value(stat: String, now := 0.0) -> float:
 	var v := base_value(stat)
 	var mul := 1.0
 	var flat := 0.0
+	var post := 1.0
 	for m in modifiers:
 		if m.stat == stat and now < m.until:
 			mul *= m.mul
 			flat += m.flat
-	return minf(v * mul + flat, HARD_CAP.get(stat, INF))
+			post *= float(m.get("post", 1.0))
+	return minf((v * mul + flat) * post, HARD_CAP.get(stat, INF)) # post: applied last (Gambling Addiction's Pow x0.1)
 
 func allocate(stat: String) -> bool:
 	if unspent <= 0 or not stat in STATS: return false
@@ -73,7 +81,7 @@ func allocate(stat: String) -> bool:
 
 # A stat can still rise (not at its hard cap): a capped stat refuses a chant before it starts [R9].
 func can_rise(stat: String) -> bool:
-	return stat in STATS and base_value(stat) < HARD_CAP.get(stat, INF)
+	return stat in STATS and base_value(stat) < HARD_CAP.get(stat, INF) and not buff_block
 
 # Spell Chant reward [R10]: CHANT_GAIN x the tier multiplier (no unspent point used).
 func grant_point(stat: String, tier := 1) -> bool:
@@ -100,10 +108,14 @@ func allocated(stat: String) -> int:
 	return int(points[stat])
 
 # Timed modifier set; re-adding the same id refreshes it (no stacking).
-func add_modifier(id: String, stat: String, mul: float, flat: float, until: float) -> void:
+func add_modifier(id: String, stat: String, mul: float, flat: float, until: float, post := 1.0) -> bool:
+	if buff_block and not id in BUFF_BLOCK_EXEMPT and (mul > 1.0 or flat > 0.0 or post > 1.0):
+		buffs_refused += 1
+		return false
 	modifiers = modifiers.filter(func(m): return not (m.id == id and m.stat == stat))
-	modifiers.append({"id": id, "stat": stat, "mul": mul, "flat": flat, "until": until})
+	modifiers.append({"id": id, "stat": stat, "mul": mul, "flat": flat, "until": until, "post": post})
 	changed.emit()
+	return true
 
 func expire(now: float) -> void:
 	var before := modifiers.size()
@@ -121,3 +133,9 @@ func attack_interval(now := 0.0) -> float:
 
 func snapshot() -> Dictionary:
 	return {"points": points.duplicate(), "unspent": unspent}
+
+# Ends every modifier from these sources now (Let it Ride's low roll strips buffs).
+func remove_sources(ids: Array) -> void:
+	var before := modifiers.size()
+	modifiers = modifiers.filter(func(m): return not (m.id in ids))
+	if modifiers.size() != before: changed.emit()

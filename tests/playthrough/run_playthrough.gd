@@ -397,9 +397,9 @@ func run() -> void:
 	c.death_panel.button.pressed.emit()
 	await step()
 	await step()
-	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == 8 and int(s.meta.chant_tier.get("magic_pow", 0)) == 1
+	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == 15 and int(s.meta.chant_tier.get("magic_pow", 0)) == 1
 	var lost: bool = s.progression.level == 1 and s.progression.kills == 0 and s.stats.unspent == 0 and c.pcombat.loadout.spell_1 == null and c.pcombat.loadout.passive == null and c.pcombat.loadout.skill_2 == null
-	check(kept, "after death, kept: rank D, all 8 pages unlocked, the Magic Pow chant tier [R5]")
+	check(kept, "after death, kept: rank D, all 15 pages unlocked, the Magic Pow chant tier [R5]")
 	check(lost and lvl_dead > 1, "after death, lost: level %d -> 1, kills, stat points and the loadout [R5]" % lvl_dead)
 	check(not p().health.dead and p().global_position.distance_to(c.spawn.at) < 0.1 and is_equal_approx(p().health.hp, p().health.max_hp) and is_equal_approx(c.pcombat.mp, c.pcombat.max_mp()), "respawned at the camp with full HP and MP")
 	check(c.map_seed != seed_dead and c.map.trees.slice(0, 5) != trees_dead and Forest.rule_violations(c.map).is_empty(), "a new seed, a new forest (still a valid map)")

@@ -3,7 +3,7 @@ extends RefCounted
 # produced it; a target accepts each action_id at most once, so overlapping
 # hurtbox contacts from one swing or pellet cannot stack.
 
-const KINDS := ["melee", "bullet", "blast", "fire", "bite", "test"]
+const KINDS := ["melee", "bullet", "blast", "fire", "bite", "test", "coin"] # coin: Heads or Tails [2026-11-14]
 
 var action_id: int
 var source_id: String

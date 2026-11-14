@@ -9,6 +9,7 @@ const Greybox = preload("res://scripts/world/greybox.gd")       # the movement a
 const DarkForest = preload("res://scripts/world/dark_forest.gd") # the game world [P7]
 const GrassFieldScript = preload("res://scripts/world/grass_field.gd")
 const SpellService = preload("res://scripts/combat/spell_service.gd")
+const GamblerService = preload("res://scripts/combat/gambler_service.gd")
 const TrainingField = preload("res://scripts/world/training_field.gd")
 const NoiseService = preload("res://scripts/world/noise_service.gd")
 const PlayerScene = preload("res://scenes/player/player.tscn")
@@ -117,6 +118,7 @@ var died_at_run := -1         # run id of the last death (for the panel)
 var hazards := Hazards.new()   # blasts and fire zones (the base for fireball AOE and Burn)
 var projectiles := ProjectileService.new() # fireballs in flight and their detonations (P2)
 var spells := SpellService.new() # Dragon's Breath, Firefly, Explosion [2026-11-14]
+var gambler := GamblerService.new() # the Gambler set: the die, coins, the coin purse [2026-11-14]
 var training: Node3D # the Training Field, through the portal beside the camp [2026-11-14]
 var effects := EffectSystem.new() # timed effects on actors (Burn)
 var effect_packets := {}       # effect tick action string -> DamagePacket id (each tick lands once)
@@ -218,7 +220,10 @@ func _ready() -> void:
 	pcombat.setup(self)
 	spells.root = spell_root
 	spells.setup(self)
+	gambler.root = spell_root
+	gambler.setup(self)
 	player.health.damaged.connect(func(_pk, applied: float) -> void: spells.on_player_hurt(applied, session.run.time)) # a hit breaks Explosion's charge
+	player.health.death_guard = pcombat.rise_guard # Rise of the Phoenix
 	_build_interactables()
 	death_panel = DeathPanel.new()
 	add_child(death_panel)
@@ -397,6 +402,7 @@ func simulate(intent: Dictionary, delta: float) -> void:
 	if player.health.dead: return
 	player.carry_factor = pcombat.combat.movement_factor()
 	player.stats = session.stats # Mov Spd drives the run speed
+	spells.on_input(bool(intent.get("attack", false)), session.run.time) # Flight's spot / Call's areas
 	intent = frozen_intent(intent)
 	player.simulate(intent, delta, session.run.time)
 	hold_for_charge()
@@ -412,12 +418,18 @@ func simulate(intent: Dictionary, delta: float) -> void:
 
 # Explosion's charge: no movement, look or action, held where it began (in the air too).
 func frozen_intent(intent: Dictionary) -> Dictionary:
+	if spells.move_locked(): return {"move": Vector2.ZERO} # Flight / Call: no moving, looking is free
 	if not spells.frozen(): return intent
 	player._look_queue = Vector2.ZERO
 	return {"move": Vector2.ZERO}
 
 func hold_for_charge() -> void:
-	if not spells.frozen(): return
+	if not spells.flight.is_empty():
+		player.global_position = spells.flight_position(session.run.time)
+		player.velocity = Vector3.ZERO
+		fall_speed = 0.0 # no landing kick or fall stun from the dive
+		return
+	if not (spells.frozen() or not spells.calling.is_empty()): return
 	player.global_position = spells.hold_position()
 	player.velocity = Vector3.ZERO
 
@@ -551,6 +563,15 @@ func effect_rows(now: float) -> Array:
 				vals = {"dps": _num(float(e.get("pow", 100.0)) * float(EffectSystem.DEFS.Burn.dps_pct))}
 			"Scorched Slow":
 				vals = {"slow": _num((1.0 - projectiles.SCORCHED_SLOW.mult) * 100.0)}
+			"Rise of the Phoenix":
+				vals = {"state": pcombat.rise_label()}
+				until_text = "Rise " + pcombat.rise_label()
+			"Gambling Addiction":
+				vals = {"state": gambler.addiction_label()}
+				until_text = "until 2 rolls above 3 (%s)" % gambler.addiction_label()
+			"Where are my Coins?":
+				vals = {"coins": gambler.purse}
+				until_text = "Coins %d/%d" % [gambler.purse, gambler.PURSE.max]
 		out.append({"id": id, "name": EffectSystem.display_name(id), "kind": EffectSystem.kind_of(id), "text": EffectSystem.describe(id, vals), "s": st.s, "until_text": until_text})
 	return out
 
@@ -616,6 +637,7 @@ func effects_step(delta: float) -> void:
 	hazards.tick(delta, session.run.time, {"targets": hazard_targets(), "los": clear_line, "noise": noise})
 	projectiles.tick(delta, session.run.time, {"targets": combat_targets(), "ray": world_ray, "los": clear_line, "noise": noise})
 	spells.tick(delta, session.run.time)
+	gambler.tick(delta, session.run.time)
 	if training: training.tick(delta, session.run.time)
 	vfx.tick(session.run.time)
 	_effect_ticks(session.run.time)
@@ -646,6 +668,10 @@ func actors_step(delta: float, now: float) -> void:
 	var any_aggro := false
 	for id in enemies:
 		enemies[id].speed_mult = projectiles.SCORCHED_SLOW.mult if effects.has(id, projectiles.SCORCHED_SLOW.id, now) else 1.0
+		var concussed: bool = effects.has(id, spells.CONCUSS_ID, now)
+		if concussed: enemies[id].speed_mult = minf(enemies[id].speed_mult, spells.FLIGHT.concuss_mult)
+		enemies[id].atk_mult = spells.FLIGHT.concuss_mult if concussed else 1.0
+		enemies[id].speed_mult = minf(enemies[id].speed_mult, gambler.heavy_mult(id, now)) # Heavy Pockets
 		enemies[id].tick(delta, now, ctx)
 		if enemies[id].aggroed: any_aggro = true
 	_respawn(now)
@@ -659,6 +685,8 @@ func concuss(until: float, mult: float) -> void:
 # A kill: EXP and the kill count go straight to Progression [Sir: no orbs]; the
 # Sprite's effects end; its respawn clock starts.
 func on_enemy_died(id: String) -> void:
+	pcombat.on_enemy_killed(effects.has(id, "Burn", session.run.time), session.run.time) # Rise of the Phoenix
+	gambler.on_kill(session.run.time) # Where are my Coins?
 	effects.clear_target(id)
 	dead_at[id] = session.run.time
 	session.progression.on_kill()
@@ -773,10 +801,13 @@ func publish(_delta: float) -> void:
 	var t := target_in_view()
 	hud.refresh({"level": pr.level, "rank": pr.rank, "hp": player.health.hp, "max_hp": player.health.max_hp,
 		"mp": pcombat.mp, "max_mp": pcombat.max_mp(now), "mission": mission, "slots": pcombat.slot_view(now),
-		"statuses": player_statuses(now), "prompt": "F  Pick up page" if t.kind == "page" else "", "notices": lines, "channel": channel_view(now)})
+		"statuses": player_statuses(now), "prompt": "F  Pick up page" if t.kind == "page" else "", "notices": lines, "channel": channel_view(now),
+		"now": now, "die": gambler.last_roll, "coins": gambler.purse if gambler.purse_equipped() else -1, "jackpot_at": gambler.jackpot_at, "addicted": gambler.addicted})
 	for id in enemies:
 		var e: CharacterBody3D = enemies[id]
 		if e.visible: e.set_statuses(effect_statuses(id, now))
+	if training and training.active:
+		for d in training.dummies: training.set_statuses(d, effect_statuses(String(d.id), now)) # every debuff shows on a dummy too
 	if effects_panel.visible: effects_panel.refresh(effect_rows(now))
 	grimoire_panel.tick() # the chant hint's countdown
 	if grimoire_panel.visible and grimoire_panel.tab == "effects": # live countdown, 4 times a second
@@ -784,11 +815,85 @@ func publish(_delta: float) -> void:
 		if _grim_fx_t >= 0.25:
 			_grim_fx_t = 0.0
 			grimoire_panel.refresh()
-	for id in enemies:
-		var e: CharacterBody3D = enemies[id]
-		e.set_burning(e.visible and not e.health.dead and effects.has(id, "Burn", now))
+	_show_burning(now)
+	_show_gambler(now)
 	damage_numbers.tick(_delta)
 	banner.tick(_delta)
+
+# Burn's look [2026-11-14]: only the vfx.embers_full burning Sprites nearest the camera
+# wear the Binbun flames (20 at once cost ~1.2 ms p50); the rest keep the orange glow, flickering.
+func _show_burning(now: float) -> void:
+	var lit: Array = []
+	for id in enemies:
+		var e: CharacterBody3D = enemies[id]
+		if e.visible and not e.health.dead and effects.has(id, "Burn", now): lit.append(e)
+		else: e.set_burning(false)
+	var cam := get_viewport().get_camera_3d()
+	var eye: Vector3 = cam.global_position if cam else player.global_position
+	if lit.size() > vfx.embers_full:
+		lit.sort_custom(func(a, b): return eye.distance_squared_to(a.global_position) < eye.distance_squared_to(b.global_position))
+	for i in lit.size():
+		lit[i].set_burning(true, i < vfx.embers_full)
+		lit[i].burn_flicker(now)
+
+# The Gambler set's looks [2026-11-14]: Pocket Change (a loot glow over the head)
+# and Heavy Pockets (a loot ring and a coin pile at the feet) on the nearest
+# vfx.embers_full enemies that have them; Gambler's High, the Jackpot and
+# Gambling Addiction on the player. Each enemy's nodes are made once, on first need.
+var _gfx := {} # player loop kind -> node
+func _show_gambler(now: float) -> void:
+	var near: Array = []
+	for id in enemies:
+		var e: CharacterBody3D = enemies[id]
+		var pocket: bool = e.visible and not e.health.dead and effects.has(id, gambler.POCKET.id, now)
+		var heavy: bool = e.visible and not e.health.dead and effects.has(id, gambler.HEAVY_ID, now)
+		if pocket or heavy: near.append([e, pocket, heavy])
+		else: _enemy_gfx(e, false, false)
+	if training and training.active: # the Training Field's dummies wear the same marks
+		for d in training.dummies:
+			var dp: bool = effects.has(String(d.id), gambler.POCKET.id, now)
+			var dh: bool = effects.has(String(d.id), gambler.HEAVY_ID, now)
+			if dp or dh: near.append([d.body, dp, dh])
+			else: _enemy_gfx(d.body, false, false)
+	if near.size() > vfx.embers_full:
+		var eye: Vector3 = player.global_position
+		near.sort_custom(func(a, b): return eye.distance_squared_to(a[0].global_position) < eye.distance_squared_to(b[0].global_position))
+	for i in near.size():
+		var full: bool = i < vfx.embers_full
+		_enemy_gfx(near[i][0], near[i][1] and full, near[i][2], near[i][2] and full)
+	_player_gfx("gamblers_high", gambler.buff_left(gambler.HIGH_ID, now) > 0.0)
+	_player_gfx("jackpot", gambler.buff_left(gambler.JACKPOT_ID, now) > 0.0)
+	_player_gfx("all_in", not gambler.all_in.is_empty())
+	_player_gfx("all_in_won", gambler.modifier_left(gambler.ALL_IN_WIN_ID, "magic_pow", now) > 0.0)
+	_player_gfx("addiction", gambler.addicted)
+
+func _enemy_gfx(e: Node3D, pocket: bool, pile: bool, ring := false) -> void:
+	for spec in [["pocket_change", pocket], ["heavy_pockets", ring]]:
+		var key: String = "gfx_" + String(spec[0])
+		var fx: Node3D = e.get_meta(key) if e.has_meta(key) else null
+		if fx == null and spec[1]:
+			fx = Vfx.make_loop(spec[0])
+			if fx == null: continue
+			if spec[0] == "pocket_change" and not e is CharacterBody3D: fx.position.y = 3.25 # a dummy: above its total and icons
+			e.add_child(fx)
+			e.set_meta(key, fx)
+		if fx != null: Vfx.set_loop(fx, spec[1])
+	var p: Node3D = e.get_meta("gfx_pile") if e.has_meta("gfx_pile") else null
+	if p == null and pile:
+		p = Vfx.coin_pile()
+		if p == null: return
+		e.add_child(p)
+		e.set_meta("gfx_pile", p)
+	if p != null: p.visible = pile
+
+func _player_gfx(kind: String, on: bool) -> void:
+	var fx: Node3D = _gfx.get(kind)
+	if fx == null and on:
+		fx = Vfx.make_loop(kind)
+		if fx == null: return
+		player.add_child(fx)
+		_gfx[kind] = fx
+	if fx != null: Vfx.set_loop(fx, on)
 
 var _effect_full := {} # presentation: each effect instance's full length, for the sweep
 # Timed effects on a target as status icons: [{id, frac (time left / full), s}] [R12].
@@ -806,6 +911,13 @@ func effect_statuses(target: String, now: float) -> Array:
 # The player's buffs and debuffs: Cultivate, Concuss, Sage Arts at work, and any effect on them.
 # The HUD's cast bar: {label, frac} while Dragon's Breath or Explosion runs, else {}.
 func channel_view(now: float) -> Dictionary:
+	if not spells.flight.is_empty():
+		var ph: String = spells.flight_phase()
+		match ph:
+			"climb": return {"label": "Flight of the Phoenix  rising (LMB: dive)", "frac": clampf((now - float(spells.flight.start)) / spells.FLIGHT.climb_s, 0.0, 1.0)}
+			"window": return {"label": "Flight of the Phoenix  choose a spot (LMB)", "frac": 1.0 - clampf((now - float(spells.flight.window_at)) / spells.FLIGHT.window_s, 0.0, 1.0)}
+			_: return {"label": "Flight of the Phoenix  diving", "frac": clampf((now - float(spells.flight.crash_start)) / spells.FLIGHT.crash_s, 0.0, 1.0)}
+	if not spells.calling.is_empty(): return {"label": "Call of the Phoenix  mark areas (LMB) %d/3" % spells.calling.areas.size(), "frac": 1.0 - clampf((now - float(spells.calling.start)) / spells.CALL.cast_s, 0.0, 1.0)}
 	if not spells.charge.is_empty(): return {"label": "Explosion  charging", "frac": spells.charge_fraction(now)}
 	if not spells.breath.is_empty(): return {"label": "Dragon's Breath", "frac": clampf((float(spells.breath.until) - now) / float(spells.BREATH.s), 0.0, 1.0)}
 	return {}
@@ -818,6 +930,16 @@ func player_statuses(now: float) -> Array:
 	for m in session.stats.modifiers:
 		if m.id == "concuss" and m.stat == "mov_spd" and now < m.until:
 			out.append({"id": "Concuss", "frac": (m.until - now) / BlightedSprite.CONCUSS_S, "s": m.until - now})
+	if pcombat.rise_equipped(): out.append({"id": "Rise of the Phoenix", "frac": 1.0, "s": 0.0, "label": pcombat.rise_label()})
+	for g in [["Gambler's High", gambler.HIGH_ID, gambler.LET.high_s], ["Jackpot", gambler.JACKPOT_ID, gambler.LET.jackpot_s]]:
+		var left: float = gambler.buff_left(g[1], now)
+		if left > 0.0: out.append({"id": g[0], "frac": left / float(g[2]), "s": left})
+	if not gambler.all_in.is_empty(): out.append({"id": "All In", "frac": (float(gambler.all_in.until) - now) / gambler.ALL_IN.invuln_s, "s": float(gambler.all_in.until) - now})
+	for g2 in [["All In: Won", gambler.ALL_IN_WIN_ID, "magic_pow", gambler.ALL_IN.win_s], ["All In: Bust", gambler.ALL_IN_BUST_ID, "mov_spd", gambler.ALL_IN.bust_s]]:
+		var left2: float = gambler.modifier_left(g2[1], g2[2], now)
+		if left2 > 0.0: out.append({"id": g2[0], "frac": left2 / float(g2[3]), "s": left2})
+	if gambler.addicted: out.append({"id": "Gambling Addiction", "frac": 1.0, "s": 0.0, "label": gambler.addiction_label()})
+	if gambler.purse_equipped(): out.append({"id": "Where are my Coins?", "frac": float(gambler.purse) / float(gambler.PURSE.max), "s": 0.0, "label": "%d/%d" % [gambler.purse, gambler.PURSE.max]})
 	if pcombat.sage_active(now): # only while it restores (it rests at full HP and MP)
 		out.append({"id": "Sage Arts", "frac": 1.0, "s": 0.0})
 	out.append_array(effect_statuses("player", now))
@@ -887,6 +1009,7 @@ func reset_run() -> void:
 	hazards.reset()
 	projectiles.reset()
 	spells.reset()
+	gambler.reset()
 	if vfx: vfx.reset()
 	if audio: audio.reset()
 	effects = EffectSystem.new()

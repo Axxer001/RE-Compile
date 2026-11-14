@@ -83,6 +83,25 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(near.hits > h0, "a cast basic fireball hits a dummy (%d hits)" % near.hits)
 	steps(c, 5.0 + TF.TOTAL_RESET_S + 0.5) # its Burn (5 s) ends, then the total clears
 	check.call(near.total == 0.0 and near.label.text == "", "a dummy's running total clears %d s after its last hit %s" % [int(TF.TOTAL_RESET_S), str([near.total, near.label.text, t.active])])
+	# The AoE cluster [Sir, 2026-11-14]: 13 dummies packed 2 m apart; blasts catch many at once.
+	var cl: Array = t.dummies.filter(func(x): return x.get("cluster", false))
+	var min_gap := INF
+	var max_r := 0.0
+	for i in cl.size():
+		max_r = maxf(max_r, Vector2(cl[i].base.x - TF.CLUSTER_AT.x, cl[i].base.z - TF.CLUSTER_AT.z).length())
+		for j in range(i + 1, cl.size()): min_gap = minf(min_gap, (cl[i].base as Vector3).distance_to(cl[j].base))
+	check.call(cl.size() == 13 and min_gap > 1.9 and max_r < 4.1, "the AoE cluster: %d dummies, %.1f m apart at least, all within %.1f m of its centre" % [cl.size(), min_gap, max_r])
+	var centre: Vector3 = TF.ORIGIN + TF.CLUSTER_AT
+	var hits0: Array = cl.map(func(x): return int(x.hits))
+	c.gambler.tails_blast(centre + Vector3(0, 0.5, 0), 10.0, 100.0, s.run.time)
+	var caught_t: int = 0
+	for i in cl.size(): if int(cl[i].hits) > int(hits0[i]): caught_t += 1
+	hits0 = cl.map(func(x): return int(x.hits))
+	c.projectiles.launch("basic", centre + Vector3(0, 6, 0.1), Vector3(0, -1, 0), {"damage": 5.0, "pow": 100.0, "target_point": centre + Vector3(0, 0.5, 0)})
+	steps(c, 1.0)
+	var caught_b: int = 0
+	for i in cl.size(): if int(cl[i].hits) > int(hits0[i]): caught_b += 1
+	check.call(caught_t == 13 and caught_b >= 7 and caught_b < 13, "AoE on the cluster: Tails' 20 m burst catches all %d; a basic fireball's 3.5 m blast at the centre catches %d" % [caught_t, caught_b])
 	# Boards: a hit flashes and counts.
 	var b: Dictionary = t.boards[0]
 	b.health.apply(DamagePacket.new(990103, "player", "player", 10.0, "blast"), s.run.time)
@@ -92,9 +111,11 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(dists.keys().size() == 5 and t.boards.all(func(bb): return absf((TF.RANGE_LINE_Z - (bb.body.position.z)) - float(bb.dist)) < 0.01), "boards stand at 10, 20, 30, 50 and 80 m from the firing line")
 	# Strafing dummies move.
 	var mover: Dictionary = t.dummies.filter(func(x): return float(x.strafe) > 0.0)[0]
-	var x0: float = mover.body.position.x
-	steps(c, 0.5)
-	check.call(absf(mover.body.position.x - x0) > 0.2, "strafing dummies move side to side")
+	var xs := [] # sampled over 2 s: a single 0.5 s window can straddle a turning point
+	for k in 8:
+		steps(c, 0.25)
+		xs.append(float(mover.body.position.x))
+	check.call(xs.max() - xs.min() > 0.5, "strafing dummies move side to side (%.1f m)" % (xs.max() - xs.min()))
 	# Back through the return portal: the forest at night.
 	p.global_position = TF.ORIGIN + TF.RETURN_PORTAL
 	p.velocity = Vector3.ZERO

@@ -6,7 +6,7 @@ extends RefCounted
 # Saved to user://profile.cfg by the real game; path "" (tests) saves nothing.
 
 const PATH := "user://profile.cfg"
-const START_PAGES := ["scorch_and_burn", "cultivate", "dragons_breath", "firefly", "explosion"] # known from the start [handoff §5]; the three Rank E spells for testing [Sir, 2026-11-14]
+const START_PAGES := ["scorch_and_burn", "cultivate", "dragons_breath", "firefly", "explosion", "flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix", "heads_or_tails", "where_are_my_coins", "let_it_ride", "all_in"] # known from the start [handoff §5]; the three Rank E spells, the Phoenix and Gambler sets for testing [Sir, 2026-11-14]
 
 signal save_failed(error: int)
 

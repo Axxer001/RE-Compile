@@ -1,4 +1,5 @@
 extends RefCounted
+const PageLibrary = preload("res://scripts/core/page_library.gd")
 # Sir's R12 playtest fixes (handoff §10), in the arena:
 #   3D melee (no hit on a player 3 m up; the hitbox follows crouch), the 3D
 #   pounce (a leap that reaches a player in mid-air or on high ground),
@@ -212,13 +213,13 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.handle_action("pause")
 	pm.buttons.restart.pressed.emit()
 	await tree.physics_frame
-	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == 8 and s.progression.rank == "D"
+	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == PageLibrary.IDS.size() and s.progression.rank == "D"
 	s.handle_action("pause")
 	pm.buttons.new_game.pressed.emit()
 	var armed: bool = pm.wipe_armed and pm.visible and s.meta.rank == "D" and pm.buttons.new_game.text.begins_with("Confirm")
 	pm.buttons.new_game.pressed.emit()
 	await tree.physics_frame
-	check.call(kept, "Restart run keeps the profile (rank D, all 8 pages)")
+	check.call(kept, "Restart run keeps the profile (rank D, every page)")
 	check.call(armed and s.meta.rank == "E" and s.meta.unlocked == s.meta.START_PAGES and s.meta.chant_tier.is_empty() and s.progression.rank == "E" and s.progression.level == 1 and not s.paused() and not pm.visible, "New game: the first click arms it, the second wipes pages, rank and chant tiers and starts from zero")
 	s.handle_action("pause")
 	pm.buttons.new_game.pressed.emit()

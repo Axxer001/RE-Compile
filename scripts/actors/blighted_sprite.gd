@@ -95,6 +95,7 @@ var pounces := 0               # dives started (tests)
 var pounce_hits := 0           # dives that landed
 var rng := RandomNumberGenerator.new()
 var speed_mult := 1.0          # Scorched Slow and the like (the world sets it each tick)
+var atk_mult := 1.0            # Phoenix Concuss: attack speed (the strike cycle runs this much slower)
 var climbing := false          # going up a ledge face
 var climb_top := 0.0           # world y it climbs to
 var climb_dir := Vector3.ZERO
@@ -209,42 +210,7 @@ func set_statuses(list: Array) -> void:
 		slow_fx = Vfx.make_loop("slow")
 		if slow_fx: add_child(slow_fx)
 	Vfx.set_loop(slow_fx, slowed)
-	if status_row == null:
-		status_row = Node3D.new()
-		status_row.name = "StatusRow"
-		status_row.position.y = BAR_Y - 0.17 # just under the HP bar
-		add_child(status_row)
-	for ch in status_row.get_children():
-		status_row.remove_child(ch)
-		ch.queue_free()
-	for i in ids.size():
-		var def := StatusIcons.icon(ids[i])
-		var tx := StatusIcons.texture(ids[i])
-		var x := (i - (ids.size() - 1) * 0.5) * 0.2 # 0.18 m icons, side by side
-		if tx:
-			var sp := Sprite3D.new()
-			sp.texture = tx
-			sp.pixel_size = 0.18 / float(tx.get_width())
-			sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			sp.shaded = false
-			sp.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
-			sp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			sp.offset = Vector2(x / sp.pixel_size, 0)
-			sp.set_meta("status", ids[i])
-			status_row.add_child(sp)
-			continue
-		var l := Label3D.new()
-		l.text = def.glyph
-		l.modulate = def.color
-		l.outline_modulate = Color(0, 0, 0)
-		l.outline_size = 6
-		l.font_size = 40
-		l.pixel_size = 0.004
-		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		l.no_depth_test = false
-		l.offset = Vector2(x / l.pixel_size, 0)
-		l.set_meta("status", ids[i])
-		status_row.add_child(l)
+	status_row = StatusIcons.update_row(self, status_row, ids, BAR_Y - 0.22) # just under the HP bar
 	status_row.visible = not ids.is_empty() and not health.dead
 
 # Burn visual [R14]: a few rising embers (at most 12 alive) and a faint
@@ -254,12 +220,30 @@ const BURN_EMBERS := 12
 const BURN_GLOW := 0.3
 var embers: Node3D # Burn: Binbun flames on the body (12 ember particles without Binbun)
 var burning := false
+var burn_full := true # presentation: the nearest burning Sprites wear the flames; the rest glow and flicker [2026-11-14]
 var _skin: BaseMaterial3D
 var _skin_emission := Color.BLACK
 var _skin_energy := 0.0
-func set_burning(on: bool) -> void:
+func set_burning(on: bool, full := true) -> void:
+	if on and burning and full != burn_full: # still burning, moved in or out of the flames' nearest set
+		burn_full = full
+		_show_embers(full)
+		if full and _skin != null: _skin.emission_energy_multiplier = BURN_GLOW
+		return
 	if on == burning: return
 	burning = on
+	burn_full = full
+	_show_embers(on and full)
+	if _skin != null:
+		_skin.emission = Color(1.0, 0.45, 0.12) if on else _skin_emission
+		_skin.emission_energy_multiplier = BURN_GLOW if on else _skin_energy
+
+# Without flames, the glow flickers (0.15-0.3) so a far burning Sprite still reads as burning.
+func burn_flicker(now: float) -> void:
+	if not burning or burn_full or _skin == null: return
+	_skin.emission_energy_multiplier = BURN_GLOW * (0.75 + 0.25 * sin(now * 13.0 + float(get_instance_id() % 97)))
+
+func _show_embers(on: bool) -> void:
 	if embers == null and on:
 		embers = Vfx.make_loop("burn")
 		if embers:
@@ -268,9 +252,6 @@ func set_burning(on: bool) -> void:
 		else: _build_embers()
 	if embers is GPUParticles3D: (embers as GPUParticles3D).emitting = on
 	elif embers != null: Vfx.set_loop(embers, on)
-	if _skin != null:
-		_skin.emission = Color(1.0, 0.45, 0.12) if on else _skin_emission
-		_skin.emission_energy_multiplier = BURN_GLOW if on else _skin_energy
 
 func _build_embers() -> void:
 	var ep := GPUParticles3D.new()
@@ -488,13 +469,13 @@ func tick(delta: float, now: float, ctx: Dictionary) -> void:
 		State.WINDUP:
 			velocity.x = 0; velocity.z = 0
 			_turn_toward(p.global_position, delta)
-			if timer + 1e-6 >= WINDUP_S:
+			if timer + 1e-6 >= WINDUP_S / maxf(atk_mult, 0.05):
 				_go(State.STRIKE)
 				_strike(p, ctx.player_health, now, ctx.los)
 		State.STRIKE:
 			velocity.x = 0; velocity.z = 0
 			# Recovery: the rest of the 1.2 s cycle, then chase (or strike again).
-			if timer + 1e-6 >= ATTACK_INTERVAL - WINDUP_S:
+			if timer + 1e-6 >= (ATTACK_INTERVAL - WINDUP_S) / maxf(atk_mult, 0.05):
 				if alive and in_reach(p, WINDUP_R): _go(State.WINDUP) # still in contact: the next 1.2 s cycle
 				else: _go(State.CHASE if alive else State.DISENGAGE)
 		State.DISENGAGE:

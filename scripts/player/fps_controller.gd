@@ -386,7 +386,7 @@ func simulate(intent: Dictionary, delta: float, now: float) -> void:
 		dash_dir = wish if wish != Vector3.ZERO else _flat_forward()
 		state = Move.DASH
 		state_t = 0.0
-		health.grant_immunity(now + tuning.dash_iframes_s, ["*"], now) # all damage (S8)
+		health.grant_immunity(now + tuning.dash_iframes_s, ["*"], now, "dash") # all damage (S8)
 		if crouching: _set_crouch(false)
 	dash_request = false
 	var moved := false # the state made this tick's move itself

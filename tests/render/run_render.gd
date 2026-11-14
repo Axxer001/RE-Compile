@@ -194,6 +194,142 @@ func run(c: Node3D) -> void:
 	check(covered_b < total_b * 0.5, "Dragon's Breath leaves most of the view clear (%d of %d samples change)" % [covered_b, total_b])
 	check(distinct(calm, breath_shot) and distinct(calm, firefly_shot) and distinct(calm, cata_shot), "Dragon's Breath, Firefly's missiles and Explosion's 50 m eruption are drawn")
 
+	# The Phoenix set: Flight's 50 m landing ring from 30 m up, Call's three areas.
+	c.park_enemies()
+	var sv: RefCounted = c.spells
+	var ring_at := Vector3(75, 0, 70)
+	var big: Node3D = c.vfx.ring(ring_at, sv.FLIGHT.ring_r, Color(1.0, 0.45, 0.1))
+	place(c, ring_at + Vector3(0, 30, 0), 0.0, -60.0)
+	await frame()
+	await frame()
+	var phx_shot := shot("fp-phoenix-ring.png")
+	big.visible = false
+	await frame()
+	var ring_none := shot("fp-phoenix-ring-off.png")
+	big.queue_free()
+	var areas: Array = []
+	for off in [Vector3(-8, 0, -12), Vector3(0, 0, -18), Vector3(9, 0, -13)]: areas.append(c.vfx.ring(Vector3(75, 0, 70) + off, sv.CALL.area_r, Color(1.0, 0.35, 0.1)))
+	place(c, Vector3(75, 0, 72), 0.0, -18.0)
+	await frame()
+	await frame()
+	var call_shot := shot("fp-phoenix-call-rings.png")
+	for n in areas: n.queue_free()
+	check(distinct(phx_shot, ring_none) and distinct(ring_none, call_shot), "Flight's landing ring and Call's area rings are drawn")
+
+	# The Gambler set [2026-11-14]: Heads' coin, Tails' giant coin and its burst,
+	# Pocket Change and Heavy Pockets on enemies, the die, the Jackpot, Addiction.
+	c.park_enemies()
+	var gb: RefCounted = c.gambler
+	var gs_at := Vector3(75, 0, 72)
+	place(c, gs_at, 0.0, -4.0)
+	await frame()
+	var g_calm := shot("fp-gambler-calm.png")
+	var eye_g: Vector3 = c.player.camera.global_position
+	var fwd_g: Vector3 = -c.player.camera.global_transform.basis.z
+	var heads_c: Dictionary = gb.throw("heads", eye_g + fwd_g * 1.5 + Vector3(0.15, -0.15, 0), fwd_g, 1.0, 100.0, null, c.session.run.time)
+	var tails_c: Dictionary = gb.throw("tails", eye_g + fwd_g * 7.0 + Vector3(-1.5, -0.5, 0), fwd_g, 1.0, 100.0, eye_g + fwd_g * 30.0, c.session.run.time)
+	for i in 4:
+		gb.tick(1.0 / 60.0, c.session.run.time + i / 60.0)
+		await frame()
+	var coins_shot := shot("fp-gambler-coins.png")
+	check(heads_c.node != null and tails_c.node != null and distinct(g_calm, coins_shot), "Heads' coin and Tails' giant coin are drawn in flight")
+	gb.reset()
+	c.vfx.tails_blast(gs_at + Vector3(0, 0, -22), c.session.run.time)
+	for i in 10: await frame()
+	var tails_shot := shot("fp-gambler-tails.png")
+	c.vfx.reset()
+	var gfoes: Array = c.enemies.values().slice(0, 2)
+	gfoes[0].reset_to(gs_at + Vector3(-2.5, 0, -7), 180.0)
+	gfoes[1].reset_to(gs_at + Vector3(2.5, 0, -7), 180.0)
+	for f in gfoes: f.inert = true
+	await frame()
+	var foes_plain := shot("fp-gambler-foes.png")
+	c.effects.apply(gfoes[0].enemy_id, "Pocket Change", 10.0, c.session.run.time, "player", 100.0)
+	c.effects.apply(gfoes[1].enemy_id, "Heavy Pockets", 10.0, c.session.run.time, "player", 100.0)
+	c.publish(0.0)
+	for i in 6: await frame()
+	var marks_shot := shot("fp-gambler-pocket-heavy.png")
+	check(distinct(g_calm, tails_shot) and exact_diff(foes_plain, marks_shot) > 30 and gfoes[0].has_meta("gfx_pocket_change") and gfoes[0].get_meta("gfx_pocket_change").visible and gfoes[1].has_meta("gfx_pile") and gfoes[1].get_meta("gfx_pile").visible, "Tails' gold burst, Pocket Change over an enemy, Heavy Pockets' ring and coin pile at the feet are drawn")
+	c.effects.clear_target(gfoes[0].enemy_id)
+	c.effects.clear_target(gfoes[1].enemy_id)
+	c.park_enemies()
+	c.publish(0.0)
+	await frame()
+	var hud_g: CanvasLayer = c.hud
+	var r6: Dictionary = gb.roll(c.session.run.time, 6)
+	gb.land(c.session.run.time)
+	hud_g.die.update(r6, r6.time + 0.3) # mid-tumble
+	await frame()
+	var tumble_shot := shot("fp-gambler-die-tumble.png")
+	c.publish(0.0)
+	hud_g.die.update(r6, r6.time + 1.2) # settled on the 6
+	await frame()
+	var die_shot := shot("fp-gambler-die-jackpot.png")
+	var die_rect: Rect2 = hud_g.die.get_global_rect()
+	var to_img: Vector2 = Vector2(die_shot.get_width(), die_shot.get_height()) / hud_g.die.get_viewport_rect().size # HUD units -> capture pixels
+	die_rect = Rect2(die_rect.position * to_img, die_rect.size * to_img)
+	var die_px := 0
+	for y in range(int(die_rect.position.y), int(die_rect.end.y), 4):
+		for x in range(int(die_rect.position.x), int(die_rect.end.x), 4):
+			if die_shot.get_pixel(x, y).get_luminance() > 0.7: die_px += 1
+	check(hud_g.die.visible and die_px > 40 and distinct(tumble_shot, die_shot) and hud_g.gold_flash.visible, "Let it Ride's die is drawn on the HUD (%d ivory samples), tumbles, then lands; the Jackpot flashes gold" % die_px)
+	gb.roll(c.session.run.time, 1)
+	gb.land(c.session.run.time)
+	gb.roll(c.session.run.time, 2)
+	gb.land(c.session.run.time)
+	c.session.run.time += 1.0 # past the gold flash
+	c.publish(0.0)
+	for i in 3: await frame()
+	var addict_shot := shot("fp-gambler-addiction.png")
+	var sat := func(img: Image) -> float:
+		var tot := 0.0
+		var n := 0
+		for y in range(0, img.get_height(), 16):
+			for x in range(0, img.get_width(), 16):
+				var px := img.get_pixel(x, y)
+				tot += maxf(px.r, maxf(px.g, px.b)) - minf(px.r, minf(px.g, px.b))
+				n += 1
+		return tot / maxf(1.0, n)
+	var purple := func(img: Image) -> float:
+		var tot := 0.0
+		var n := 0
+		for y in range(0, img.get_height(), 16):
+			for x in range(0, img.get_width(), 16):
+				var px := img.get_pixel(x, y)
+				tot += px.b - px.g
+				n += 1
+		return tot / maxf(1.0, n)
+	check(hud_g.addict_tint.visible and purple.call(addict_shot) > purple.call(g_calm), "Gambling Addiction tints the view purple and desaturates it (blue-green %.3f vs %.3f; chroma %.3f vs %.3f)" % [purple.call(addict_shot), purple.call(g_calm), sat.call(addict_shot), sat.call(g_calm)])
+	gb.reset()
+	c.notices.clear() # the rolls' notices (the sky check below counts bright points)
+	c.publish(0.0)
+	await frame()
+	# Every Gambler buff aura at once [Sir, 2026-11-14]: they must leave the first-person view clear.
+	place(c, gs_at, 0.0, 0.0)
+	await frame()
+	var aura_off := shot("fp-gambler-auras-off.png")
+	for k in ["gamblers_high", "jackpot", "all_in", "all_in_won"]: c._player_gfx(k, true)
+	for i in 8: await frame()
+	var aura_on := shot("fp-gambler-auras-on.png")
+	var w_a := aura_on.get_width()
+	var h_a := aura_on.get_height()
+	var centre := 0
+	var centre_n := 0
+	for y in range(int(h_a * 0.15), int(h_a * 0.75), 8): # the view above the action bar
+		for x in range(int(w_a * 0.2), int(w_a * 0.8), 8):
+			centre_n += 1
+			if absf(aura_on.get_pixel(x, y).get_luminance() - aura_off.get_pixel(x, y).get_luminance()) > DISTINCT_LUMA: centre += 1
+	for k in ["gamblers_high", "jackpot", "all_in", "all_in_won"]: c._player_gfx(k, false)
+	c.player.pitch = deg_to_rad(-60.0) # looking down at the feet, the auras show
+	c.player.apply_look()
+	await frame()
+	var down_off := shot("fp-gambler-auras-down-off.png")
+	for k in ["gamblers_high", "jackpot", "all_in", "all_in_won"]: c._player_gfx(k, true)
+	for i in 8: await frame()
+	var down_on := shot("fp-gambler-auras-down-on.png")
+	for k in ["gamblers_high", "jackpot", "all_in", "all_in_won"]: c._player_gfx(k, false)
+	check(centre < centre_n * 0.05 and distinct(down_off, down_on), "the Gambler buff auras keep the view clear (%d of %d centre samples change) and show round the feet" % [centre, centre_n])
+
 	# The Training Field [2026-11-14]: the portal beside the camp, then the daytime field.
 	var tfield: Node3D = c.training
 	var TFs = tfield.get_script()
@@ -206,7 +342,7 @@ func run(c: Node3D) -> void:
 	tfield.enter()
 	var views := [["fp-field-arrival.png", TFs.ARRIVE, 0.0, 0.0], ["fp-field-dummies.png", Vector3(50, 0, 188), 0.0, -3.0],
 		["fp-field-range.png", Vector3(150, 0, 192), 0.0, 2.0], ["fp-field-rocks.png", Vector3(165, 0, 60), 0.0, 8.0],
-		["fp-field-drills.png", Vector3(65, 0, 100), 0.0, 5.0]]
+		["fp-field-drills.png", Vector3(65, 0, 100), 0.0, 5.0], ["fp-field-cluster.png", TFs.CLUSTER_AT + Vector3(0, 0, 13), 0.0, -6.0]]
 	var day_l := 0.0
 	for v in views:
 		place(c, TFs.ORIGIN + v[1], v[2], v[3])
@@ -441,6 +577,17 @@ func run(c: Node3D) -> void:
 	await frame()
 	await frame()
 	var gshot := shot("fp-grimoire.png")
+	for lp in ["dragons_breath", "quick_step"]: # the lesson and its breakdown, scrolled into view
+		c.grimoire_panel.select_page(lp)
+		await frame()
+		await frame()
+		var pb: ScrollContainer = c.grimoire_panel.panel.find_child("PageBody", true, false)
+		if pb: pb.scroll_vertical = int(pb.get_v_scroll_bar().max_value)
+		await frame()
+		shot("fp-lesson-%s.png" % lp)
+	c.grimoire_panel.select_page("scorch_and_burn")
+	await frame()
+	await frame()
 	var gpn: Control = c.grimoire_panel.panel
 	var scr := Vector2(get_viewport().get_visible_rect().size)
 	var grect := Rect2(gpn.position, gpn.size)

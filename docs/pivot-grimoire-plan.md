@@ -24,6 +24,13 @@ All teaching content is C++ (Python retired). Each page teaches one beginner C++
 | 6 | Dragon's Breath | Variables | `int`/`double`/`string`, `const`, `=` | 5: variables |
 | 7 | Firefly | User Input | `cin >>` into a declared variable | 6: user input |
 | 8 | Explosion | Data Types | `int`, `float`, `double`, `bool`, `char`, `string`, `auto` | 7: data types |
+| 9 | Flight of the Phoenix | Operators | `+ - * / %`, `++`/`--`, `+=` `-=` `*=` `/=` | 8: operators |
+| 10 | Call of the Phoenix | Strings | `string`, `+`/`+=` joining, `.length()`, `<string>` | 9: strings |
+| 11 | Rise of the Phoenix | Math | `<cmath>`, `max`, `min`, `sqrt`, `pow`, `round` | 10: math functions |
+| 12 | Heads or Tails | Booleans | `bool`, `true`/`false`, `==` `!=` `<` `>` `<=` `>=`, `boolalpha` | 11: booleans |
+| 13 | Where are my Coins? | If...Else | `if`, `else if`, `else`, `&&` `||` `!` | 12: if / else |
+| 14 | Let it Ride | Switch | `switch`, `case`, `break`, `default` | 13: switch |
+| 15 | All In | While Loop | `while (...) { }`, `do { } while (...);` | 14: while loops |
 
 The puzzle bank is `data/puzzles/code_assembly.json`, made by `tools/make_code_assembly_bank.py`, which compiles every variant with `g++ -std=c++17 -fsyntax-only -Wall -Werror`. Saved chant levels carry over unchanged.
 
