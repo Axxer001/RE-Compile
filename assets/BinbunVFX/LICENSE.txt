@@ -1,0 +1,8 @@
+Portal VFX - Godot 3D (free version) by Binbun (binbun3d.itch.io).
+License: Creative Commons Zero v1.0 Universal (CC0), per the asset's itch.io page
+https://binbun3d.itch.io/godot-portal-vfx ("Asset license: Creative Commons Zero v1.0
+Universal"; free for personal, educational and commercial projects, no attribution
+required), checked 2026-11-14. The downloaded folder (PortalVFX) carried no licence file.
+RE:Compile change: its shaders include assets/BinbunVFX_Vol2/pixel_fx.gdshaderinc
+(effect time stepped at 12 FPS).
+https://creativecommons.org/publicdomain/zero/1.0/

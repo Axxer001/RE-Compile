@@ -9,6 +9,7 @@ const Greybox = preload("res://scripts/world/greybox.gd")       # the movement a
 const DarkForest = preload("res://scripts/world/dark_forest.gd") # the game world [P7]
 const GrassFieldScript = preload("res://scripts/world/grass_field.gd")
 const SpellService = preload("res://scripts/combat/spell_service.gd")
+const TrainingField = preload("res://scripts/world/training_field.gd")
 const NoiseService = preload("res://scripts/world/noise_service.gd")
 const PlayerScene = preload("res://scenes/player/player.tscn")
 const NavigationGrid = preload("res://scripts/world/navigation_grid.gd")
@@ -116,6 +117,7 @@ var died_at_run := -1         # run id of the last death (for the panel)
 var hazards := Hazards.new()   # blasts and fire zones (the base for fireball AOE and Burn)
 var projectiles := ProjectileService.new() # fireballs in flight and their detonations (P2)
 var spells := SpellService.new() # Dragon's Breath, Firefly, Explosion [2026-11-14]
+var training: Node3D # the Training Field, through the portal beside the camp [2026-11-14]
 var effects := EffectSystem.new() # timed effects on actors (Burn)
 var effect_packets := {}       # effect tick action string -> DamagePacket id (each tick lands once)
 var sfx: Node3D                # synthesised sound effects
@@ -148,6 +150,10 @@ func _ready() -> void:
 	if world_kind == "forest":
 		_forest_node = built.node
 		_fixed_solids = built.solids
+		training = TrainingField.new()
+		add_child(training)
+		training.build(self)
+		_fixed_solids = _fixed_solids + training.forest_solids() # its portal frame: enemies path round it
 		if not new_map():
 			get_tree().quit(1)
 			return
@@ -357,6 +363,7 @@ func simulate(intent: Dictionary, delta: float) -> void:
 	intent = frozen_intent(intent)
 	player.simulate(intent, delta, session.run.time)
 	hold_for_charge()
+	if training: training.check_portals(session.run.time)
 	_landing_kick()
 	pcombat.simulate(intent, delta, session.run.time)
 	footsteps(delta)
@@ -558,6 +565,7 @@ func combat_targets() -> Array:
 		if not e.health.dead and e.visible:
 			out.append({"id": id, "pos": e.global_position + Vector3(0, 1.0, 0), "radius": e.RADIUS, "health": e.health, "body": e,
 				"a": e.global_position + Vector3(0, e.RADIUS, 0), "b": e.global_position + Vector3(0, e.HEIGHT - e.RADIUS, 0)}) # a-b: the capsule axis
+	if training: out.append_array(training.targets()) # dummies and boards, while the player is in the field
 	return out
 
 func hazard_targets() -> Array:
@@ -571,6 +579,7 @@ func effects_step(delta: float) -> void:
 	hazards.tick(delta, session.run.time, {"targets": hazard_targets(), "los": clear_line, "noise": noise})
 	projectiles.tick(delta, session.run.time, {"targets": combat_targets(), "ray": world_ray, "los": clear_line, "noise": noise})
 	spells.tick(delta, session.run.time)
+	if training: training.tick(delta, session.run.time)
 	vfx.tick(session.run.time)
 	_effect_ticks(session.run.time)
 
@@ -578,7 +587,7 @@ func effects_step(delta: float) -> void:
 # tick lands once however often it is offered.
 func _effect_ticks(now: float) -> void:
 	for ev in effects.tick(now):
-		var h: Node = enemies[ev.target].health if enemies.has(ev.target) else (player.health if ev.target == "player" else null)
+		var h: Node = enemies[ev.target].health if enemies.has(ev.target) else (player.health if ev.target == "player" else (training.health_of(String(ev.target)) if training else null))
 		if h == null or h.dead: continue
 		if not effect_packets.has(ev.action_id): effect_packets[ev.action_id] = CombatController.next_id()
 		_burn_ticking = true
@@ -796,6 +805,7 @@ func new_map(seed := -1) -> bool:
 	return true
 
 func reset_run() -> void:
+	if training: training.reset() # a restart or death always returns to the forest, at night
 	if world_kind == "forest":
 		if _map_fresh: _map_fresh = false
 		elif not new_map():

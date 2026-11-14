@@ -194,6 +194,30 @@ func run(c: Node3D) -> void:
 	check(covered_b < total_b * 0.5, "Dragon's Breath leaves most of the view clear (%d of %d samples change)" % [covered_b, total_b])
 	check(distinct(calm, breath_shot) and distinct(calm, firefly_shot) and distinct(calm, cata_shot), "Dragon's Breath, Firefly's missiles and Explosion's 50 m eruption are drawn")
 
+	# The Training Field [2026-11-14]: the portal beside the camp, then the daytime field.
+	var tfield: Node3D = c.training
+	var TFs = tfield.get_script()
+	c.park_enemies()
+	place(c, TFs.FOREST_PORTAL + Vector3(-6, 0, 0), -90.0) # in the camp, facing east at the portal
+	await frame()
+	await frame()
+	var portal_shot := shot("fp-portal.png")
+	var night_l := luma(portal_shot, 0.6)
+	tfield.enter()
+	var views := [["fp-field-arrival.png", TFs.ARRIVE, 0.0, 0.0], ["fp-field-dummies.png", Vector3(50, 0, 188), 0.0, -3.0],
+		["fp-field-range.png", Vector3(150, 0, 192), 0.0, 2.0], ["fp-field-rocks.png", Vector3(165, 0, 60), 0.0, 8.0],
+		["fp-field-drills.png", Vector3(65, 0, 100), 0.0, 5.0]]
+	var day_l := 0.0
+	for v in views:
+		place(c, TFs.ORIGIN + v[1], v[2], v[3])
+		await frame()
+		await frame()
+		var img := shot(v[0])
+		if v[0] == "fp-field-arrival.png": day_l = luma(img, 0.6)
+	tfield.leave()
+	c.park_enemies()
+	check(day_l > night_l + 0.1, "the Training Field is in daylight (view luma %.3f, the forest at night %.3f)" % [day_l, night_l])
+
 	# Phase 4: a lost page is a Fantasy Props scroll, glowing on the forest floor.
 	var qs: Vector3 = c.page_spots.quick_step
 	place(c, qs + Vector3(0, 0, 1.6), 0.0, -30.0)

@@ -153,3 +153,17 @@ Removed: reload (R), drop (G), throw, cycle throwable, flashlight, slot 4. The r
 **Work split:**
 - **Main session:** P0 input map and gun retirement, then P1 movement, plus its own files (main, controller, player_combat, weapon_view, tests registration).
 - **This session:** new headless systems as new files: `ability_page.gd`, `stat_container.gd`, `progression.gd`, `effect_system.gd` and their tests. Then PageDatabase, CodeOrderValidator and ChantEngine (P5/P6 data).
+
+
+### Training Field [Sir, 2026-11-14]
+
+A separate 200 x 200 m daytime practice field (`scripts/world/training_field.gd`), built at world x 1000 so it never overlaps the forest. A Binbun portal (CC0) east of the camp fire leads there and a second portal leads back. Portals check only the player, so enemies never pass, and both are sealed (red) while the player is in combat. Entering turns the world to day (sun, blue sky, light fog) and hides the forest; leaving, or a restart or death, restores the night.
+
+| Area (local metres) | Contents |
+|---|---|
+| North-west | The movement sandbox's drills: slide gap, 1/2/3 m ledges, ramps, stairs, jump course, run walls, drop tower, surf wedge, clamber |
+| North-east | Rock formations: boulder field (1-2.5 m), rock stairs 1-5 m, a 7 m climbing tower with a 3.5 m ledge, an arch to slide under, scattered cover |
+| South-west | 18 training dummies: still, on 2-3 m platforms, and strafing. They take no damage and never die, but show every hit as a damage number and a running total (clears 3 s after the last hit). |
+| South-east | Target range: 15 boards at 10, 20, 30, 50 and 80 m from a firing line; a hit flashes the board |
+
+Training hits never count toward the profile's records and give no EXP.

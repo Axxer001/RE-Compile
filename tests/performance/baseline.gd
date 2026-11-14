@@ -238,6 +238,7 @@ class ProfileWorld extends "res://scripts/main.gd":
 		player.simulate(intent, delta, session.run.time)
 		costs.movement += Time.get_ticks_usec() - part
 		hold_for_charge()
+		if training: training.check_portals(session.run.time)
 		_landing_kick()
 		part = Time.get_ticks_usec()
 		pcombat.simulate(intent, delta, session.run.time)
