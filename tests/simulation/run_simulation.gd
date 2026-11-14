@@ -66,6 +66,7 @@ func run(c: Node3D) -> void:
 	await physics_frame
 	await preload("res://tests/simulation/test_forest.gd").run(check, forest)
 	await preload("res://tests/simulation/test_training.gd").run(check, forest)
+	await preload("res://tests/simulation/test_graphics.gd").run(check, forest)
 	if fixture == "fail":
 		check(false, "injected fixture failure")
 	if fixture == "missing-pass":

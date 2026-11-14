@@ -98,6 +98,20 @@ var counts := {"bursts": 0, "decals": 0, "flashes": 0, "trails": 0, "skipped": 0
 # Per-tick caps: a storm of blasts (64 fireballs at once) shows a few bursts
 # and one scorch a tick, and no scorch on top of a live one.
 const BURSTS_PER_TICK := 2
+# Settings > Spell effects quality [2026-11-14]: 0 low, 1 medium, 2 high.
+var bursts_per_tick := BURSTS_PER_TICK
+var lite_basic := false             # low: small blasts use the cheap built-in burst, not the Binbun explosion
+static var particle_ratio := 1.0    # share of each effect's particles drawn
+const QUALITY := {0: {"ratio": 0.35, "bursts": 1, "lit": 2, "lite": true}, 1: {"ratio": 0.6, "bursts": 2, "lit": 4, "lite": false},
+	2: {"ratio": 1.0, "bursts": 2, "lit": 8, "lite": false}}
+
+func set_quality(q: int, world: Node) -> void:
+	var spec: Dictionary = QUALITY.get(clampi(q, 0, 2))
+	particle_ratio = float(spec.ratio)
+	bursts_per_tick = int(spec.bursts)
+	lite_basic = bool(spec.lite)
+	if world and world.get("projectiles") != null: world.projectiles.lit_max = int(spec.lit)
+	if world: for gp in world.find_children("*", "GPUParticles3D", true, false): (gp as GPUParticles3D).amount_ratio = particle_ratio
 const DECALS_PER_TICK := 1
 const DECAL_SPACING := 1.0
 var _tick_bursts := 0
@@ -291,6 +305,7 @@ static func _tint(fx: Node, color: Color) -> void:
 # effect hides itself when its animation ends.
 func _make_one_shot(fx: Node3D) -> void:
 	if "one_shot" in fx: fx.one_shot = true
+	for gp in fx.find_children("*", "GPUParticles3D", true, false): (gp as GPUParticles3D).amount_ratio = particle_ratio
 	_scale_particles(fx)
 	for ap in fx.find_children("*", "AnimationPlayer", true, false):
 		for an in (ap as AnimationPlayer).get_animation_list():
@@ -305,7 +320,7 @@ func binbun_ready(kind: String) -> bool:
 
 # One burst of a kind at `at` (the pooled emitters take turns).
 func _play_burst(kind: String, at: Vector3) -> void:
-	if binbun_ready(kind):
+	if binbun_ready(kind) and not (lite_basic and kind == "basic"):
 		var pool_b: Array = _bb[kind]
 		var fx: Node3D = pool_b[_next_bb[kind] % pool_b.size()]
 		_next_bb[kind] += 1
@@ -343,7 +358,7 @@ func explosion(at: Vector3, kind: String, now: float, ground_y := NAN) -> void:
 		_tick_bursts = 0
 		_tick_decals = 0
 	var special := kind == "special"
-	if special or _tick_bursts < BURSTS_PER_TICK: # a special always shows
+	if special or _tick_bursts < bursts_per_tick: # a special always shows
 		var gy0: float = at.y - 1.0 if is_nan(ground_y) else ground_y
 		_play_burst("special" if special else "basic", Vector3(at.x, maxf(gy0, 0.0), at.z) if special else at) # the nuke rises from the ground
 		_tick_bursts += 1
@@ -456,7 +471,9 @@ static func make_loop(kind: String) -> Node3D:
 		for gp in fx.find_children("*", "GPUParticles3D", true, false): (gp as GPUParticles3D).amount = int(spec.amount)
 	if spec.has("offset"): fx.position = spec.offset
 	fx.visible = false
-	for gp in fx.find_children("*", "GPUParticles3D", true, false): (gp as GPUParticles3D).emitting = false
+	for gp in fx.find_children("*", "GPUParticles3D", true, false):
+		(gp as GPUParticles3D).emitting = false
+		(gp as GPUParticles3D).amount_ratio = particle_ratio
 	return fx
 
 static func set_loop(fx: Node3D, on: bool) -> void:

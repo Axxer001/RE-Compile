@@ -35,6 +35,7 @@ const BASIC_LIFE_S := 3.0   # [handoff P2] a basic fireball fizzles after 3 s
 # Perf option A [Sir, 2026-11-13]: only the shots nearest the camera carry a
 # light (re-ranked every tick); Ring of Fire's orbs always keep theirs.
 const LIT_MAX := 8
+var lit_max := LIT_MAX    # Settings > Spell effects quality lowers it
 
 var root: Node3D            # visuals parent (null = headless, no visuals)
 var vfx: Node3D             # pooled effects (trails, bursts, scorches); null = none
@@ -314,10 +315,10 @@ func _rank_lights() -> void:
 	var cam := root.get_viewport().get_camera_3d()
 	var eye: Vector3 = cam.global_position if cam else Vector3.ZERO
 	var live: Array = shots.filter(func(sh): return sh.node != null and is_instance_valid(sh.node))
-	if live.size() > LIT_MAX:
+	if live.size() > lit_max:
 		live.sort_custom(func(a, b): return eye.distance_squared_to(a.pos) < eye.distance_squared_to(b.pos))
 	for i in live.size():
-		(live[i].node.get_meta("light") as OmniLight3D).visible = i < LIT_MAX
+		(live[i].node.get_meta("light") as OmniLight3D).visible = i < lit_max
 
 # Shots whose light is on (test hook).
 func lit_shots() -> Array:

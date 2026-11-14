@@ -564,7 +564,17 @@ const TREE_KINDS := [["Pine_5", 0.85], ["DeadTree_1", 0.15]] # perf-tuned 2026-1
 const ROCK_KINDS := ["Rock_Medium_1", "Rock_Medium_2", "Rock_Medium_3"]
 const CHUNK := 10.0           # small chunks: the visibility range culls close to the real distance
 const NEAR_END := 40.0          # real trees up to here, impostors beyond [Sir, 2026-11-13: trees turned low-poly at 20 m]
-const NEAR_FADE := 8.0          # the hand-over to the impostors is a wide, dithered cross-fade (no snap)
+const NEAR_FADE := 8.0
+static var near_end := NEAR_END # Settings > Tree detail distance (applied live by set_tree_distance)
+
+# Moves the detailed-tree / impostor hand-over of an already built forest to `m` metres.
+static func set_tree_distance(forest: Node, m: float) -> void:
+	near_end = m
+	if forest == null: return
+	var kit := forest.find_child("KitTrees", true, false)
+	if kit: for g in kit.find_children("*", "GeometryInstance3D", true, false): (g as GeometryInstance3D).visibility_range_end = m
+	var far := forest.find_child("FarTrees", true, false)
+	if far: for g in far.find_children("*", "GeometryInstance3D", true, false): (g as GeometryInstance3D).visibility_range_begin = m - NEAR_FADE          # the hand-over to the impostors is a wide, dithered cross-fade (no snap)
 # Trunk radius of each kit tree at scale 1 (measured at 1-2 m up the bark).
 const TRUNK_R := {"Pine_5": 0.52, "DeadTree_1": 0.74}
 const TRUNK_MAX := 0.85         # drawn trunk radius cap (m): taller trees stop getting fatter
@@ -689,7 +699,7 @@ static func dress(root: Node3D, layout: Dictionary) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(layout.seed) * 7919 + 17
 	var chunk_m: float = float(OS.get_environment("RC_CHUNK")) if OS.has_environment("RC_CHUNK") else CHUNK
-	var near_m: float = float(OS.get_environment("RC_NEAR")) if OS.has_environment("RC_NEAR") else NEAR_END
+	var near_m: float = float(OS.get_environment("RC_NEAR")) if OS.has_environment("RC_NEAR") else near_end
 	var kinds: Array = [["Pine_5", 1.0]] if OS.has_environment("RC_PINES") else TREE_KINDS
 	var chunks := {} # Vector2i -> {kind: [xform]}
 	var far_by_kind := {} # kind -> [xform], every tree (the far LOD)

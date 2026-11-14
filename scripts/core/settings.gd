@@ -26,6 +26,45 @@ var ads_mult := DEFAULT_ADS
 var ads_fov_scale := true # also scale ADS by tan(ads_fov/2)/tan(fov/2), Apex-style
 var invert_y := false
 var damage_numbers := true # floating damage numbers [R14]
+# Graphics [Sir, 2026-11-14]. Saved under [graphics]. The quality keys follow the
+# preset (Low / Medium / High); changing one by hand makes the preset Custom.
+const WINDOW_SIZES := [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080), Vector2i(2560, 1440)]
+const FPS_CAPS := [0, 60, 120, 144, 165]          # 0 = unlimited
+const GFX_DEFAULTS := {"preset": "high", "window_mode": 0, "window_size": 0, "pixel_scale": 3, "vsync": true, "fps_cap": 0,
+	"fov": 90.0, "shadows": 2, "volumetric_fog": true, "tree_distance": 40.0, "effects": 2, "colour16": true, "film_grain": 2, "camera_shake": true}
+const QUALITY_KEYS := ["shadows", "volumetric_fog", "tree_distance", "effects", "grass_distance"]
+const PRESETS := {
+	"low": {"shadows": 0, "volumetric_fog": false, "tree_distance": 20.0, "effects": 0, "grass_distance": 20.0},
+	"medium": {"shadows": 1, "volumetric_fog": true, "tree_distance": 30.0, "effects": 1, "grass_distance": 25.0},
+	"high": {"shadows": 2, "volumetric_fog": true, "tree_distance": 40.0, "effects": 2, "grass_distance": 25.0},
+}
+var gfx := GFX_DEFAULTS.duplicate()
+
+# Applies a preset's quality values (and remembers the preset); "custom" changes nothing.
+func apply_preset(name: String) -> void:
+	if not PRESETS.has(name): return
+	for k in PRESETS[name]:
+		if k == "grass_distance": grass_distance = float(PRESETS[name][k])
+		else: gfx[k] = PRESETS[name][k]
+	gfx.preset = name
+	changed.emit()
+
+func gfx_value(key: String) -> Variant:
+	return grass_distance if key == "grass_distance" else gfx.get(key, GFX_DEFAULTS.get(key))
+
+static func _clean_gfx(key: String, value: Variant) -> Variant:
+	match key:
+		"window_mode": return clampi(int(value), 0, 2)
+		"window_size": return clampi(int(value), 0, WINDOW_SIZES.size() - 1)
+		"pixel_scale": return clampi(int(value), 1, 4)
+		"fps_cap": return int(value) if int(value) in FPS_CAPS else 0
+		"fov": return clampf(float(value), 70.0, 110.0)
+		"shadows", "effects", "film_grain": return clampi(int(value), 0, 2)
+		"tree_distance": return clampf(float(value), 20.0, 60.0)
+		"vsync", "volumetric_fog", "colour16", "camera_shake": return bool(value)
+		"preset": return String(value) if String(value) in ["low", "medium", "high", "custom"] else "custom"
+	return value
+
 var infinite_mana := false # debug [Sir, 2026-11-14]: "Infinite Mana + No Cooldown": MP never spent or required, every cooldown 0
 const DEFAULT_GRASS := 25.0
 var grass_distance := DEFAULT_GRASS # metres of grass round the player [Sir, 2026-11-13]
@@ -123,8 +162,19 @@ func set_value(key: String, value: Variant) -> void:
 		"invert_y": invert_y = bool(value)
 		"damage_numbers": damage_numbers = bool(value)
 		"infinite_mana": infinite_mana = bool(value)
-		"grass_distance": grass_distance = clampf(float(value), 20.0, 120.0)
+		"gfx_preset":
+			if String(value) == "custom": gfx.preset = "custom"
+			else:
+				apply_preset(String(value))
+				return
+		"grass_distance":
+			grass_distance = clampf(float(value), 20.0, 120.0)
+			gfx.preset = "custom"
 		_:
+			if key.begins_with("gfx_") and GFX_DEFAULTS.has(key.trim_prefix("gfx_")):
+				var k := key.trim_prefix("gfx_")
+				gfx[k] = _clean_gfx(k, value)
+				if k in QUALITY_KEYS: gfx.preset = "custom"
 			if key.begins_with("vol_") and DEFAULT_VOLUMES.has(key.trim_prefix("vol_")):
 				volumes[key.trim_prefix("vol_")] = clampf(float(value), 0.0, 1.0)
 	changed.emit()
@@ -170,6 +220,7 @@ func reset() -> void:
 	damage_numbers = true
 	infinite_mana = false
 	grass_distance = DEFAULT_GRASS
+	gfx = GFX_DEFAULTS.duplicate()
 	volumes = DEFAULT_VOLUMES.duplicate()
 	apply_bindings()
 	changed.emit()
@@ -195,6 +246,7 @@ func save(to := "") -> int:
 	cf.set_value("mouse", "invert_y", invert_y)
 	cf.set_value("display", "damage_numbers", damage_numbers)
 	cf.set_value("debug", "infinite_mana", infinite_mana)
+	for k in gfx: cf.set_value("graphics", k, gfx[k])
 	cf.set_value("display", "grass_distance", grass_distance)
 	for k in volumes: cf.set_value("audio", k, volumes[k])
 	cf.set_value("meta", "layout", LAYOUT)
@@ -216,6 +268,8 @@ func load_from(from := "") -> bool:
 	invert_y = bool(cf.get_value("mouse", "invert_y", false))
 	damage_numbers = bool(cf.get_value("display", "damage_numbers", true))
 	infinite_mana = bool(cf.get_value("debug", "infinite_mana", false))
+	gfx = GFX_DEFAULTS.duplicate()
+	for k in GFX_DEFAULTS: gfx[k] = _clean_gfx(k, cf.get_value("graphics", k, GFX_DEFAULTS[k]))
 	set_value("grass_distance", cf.get_value("display", "grass_distance", DEFAULT_GRASS))
 	for k in DEFAULT_VOLUMES: volumes[k] = clampf(float(cf.get_value("audio", k, DEFAULT_VOLUMES[k])), 0.0, 1.0)
 	# A file from an older key layout keeps its mouse settings but not its binds

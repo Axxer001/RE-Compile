@@ -318,6 +318,43 @@ func apply_settings() -> void:
 	GrassFieldScript.view_distance = session.settings.grass_distance
 	var gf: Node = find_child("GrassField", true, false)
 	if gf: gf.set_distance(session.settings.grass_distance)
+	apply_graphics()
+
+# Settings > Graphics [Sir, 2026-11-14], applied live. Window, VSync and the frame
+# cap are left alone when a test or benchmark drives the world (external_driver).
+func apply_graphics() -> void:
+	var g: Dictionary = session.settings.gfx
+	if lofi and lofi.container and lofi.container.stretch_shrink != int(g.pixel_scale):
+		lofi.container.stretch_shrink = int(g.pixel_scale)
+		lofi.shrink = int(g.pixel_scale)
+		_sync_pixel_grid.call_deferred()
+	if player and player.get("tuning") != null: player.tuning.fov = float(g.fov)
+	if art:
+		art.set_colour16(bool(g.colour16))
+		art.set_grain([0.0, 0.025, 0.05][int(g.film_grain)])
+	if lofi: lofi.kicks_enabled = bool(g.camera_shake)
+	var we: Array = find_children("*", "WorldEnvironment", true, false)
+	if not we.is_empty() and RenderingServer.get_current_rendering_method() == "forward_plus":
+		(we[0] as WorldEnvironment).environment.volumetric_fog_enabled = bool(g.volumetric_fog)
+	var sh := int(g.shadows)
+	for l in find_children("*", "DirectionalLight3D", true, false):
+		var dl := l as DirectionalLight3D
+		dl.shadow_enabled = sh > 0
+		dl.directional_shadow_max_distance = 25.0 if sh == 1 else (70.0 if dl.name == "Sun" else 50.0)
+	RenderingServer.directional_shadow_atlas_set_size(2048 if sh <= 1 else 4096, true)
+	if world_kind == "forest": DarkForest.set_tree_distance(_forest_node, float(g.tree_distance))
+	if vfx: vfx.set_quality(int(g.effects), self)
+	if external_driver or DisplayServer.get_name() == "headless": return
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if bool(g.vsync) else DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = int(g.fps_cap)
+	var want_mode: int = [DisplayServer.WINDOW_MODE_WINDOWED, DisplayServer.WINDOW_MODE_FULLSCREEN, DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN][int(g.window_mode)]
+	if DisplayServer.window_get_mode() != want_mode: DisplayServer.window_set_mode(want_mode)
+	if want_mode == DisplayServer.WINDOW_MODE_WINDOWED:
+		var sz: Vector2i = session.settings.WINDOW_SIZES[int(g.window_size)]
+		if DisplayServer.window_get_size() != sz:
+			DisplayServer.window_set_size(sz)
+			var scr := DisplayServer.screen_get_usable_rect()
+			DisplayServer.window_set_position(scr.position + (scr.size - sz) / 2)
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if pause_menu != null and pause_menu.visible:
