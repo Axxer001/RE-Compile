@@ -233,6 +233,11 @@ func run(c: Node3D) -> void:
 	place(c, c.spawn.at, 0.0, 55.0)
 	await frame()
 	var sky_shot := shot("fp-sky.png")
+	var bright := 0
+	for y in range(sky_shot.get_height() / 9, sky_shot.get_height() / 2, 4): # the sky, below the HUD bars
+		for x in range(sky_shot.get_width() / 6, sky_shot.get_width() * 5 / 6, 4):
+			if sky_shot.get_pixel(x, y).get_luminance() > 0.5: bright += 1
+	check(bright < 10, "no stars in the night sky (%d bright points)" % bright)
 	check(luma(sky_shot, 0.6) > 0.005 and luma(sky_shot, 0.6) < 0.25, "the night sky overhead is dark but not black (luma %.3f)" % luma(sky_shot, 0.6))
 	# Pixel look [Sir, 2026-11-13]: the world view at 1/3 resolution, nearest-neighbour
 	# up, 16-bit colour dithered on its grid; the post layer grades the world below the HUD.

@@ -58,7 +58,7 @@ func apply(world: Node) -> void:
 		shadows += 1
 	_add_post()
 
-# Binbun's sky in a night setting [Phase 3]: stars and dim clouds above the
+# Binbun's sky in a night setting [Phase 3]: dim clouds (no stars) above the
 # forest. The shader treats the scene's main light as the sun (and puts its moon
 # opposite), and ours is the moon, so the sky runs on its own night blend
 # instead. Fog covers it only partly, so the canopy gaps show it.
@@ -77,20 +77,12 @@ func apply_night_sky(e: Environment) -> bool:
 	m.set_shader_parameter("wind_speed", Vector2(0.15, 0.05))
 	m.set_shader_parameter("cloud_tex_01", load(CLOUDS % 1))
 	m.set_shader_parameter("cloud_tex_02", load(CLOUDS % 2))
-	var stars := FastNoiseLite.new() # fine noise: small star points (the cloud noise draws streaks)
-	stars.noise_type = FastNoiseLite.TYPE_SIMPLEX
-	stars.frequency = 0.35
-	stars.fractal_type = FastNoiseLite.FRACTAL_NONE
-	var st := NoiseTexture2D.new()
-	st.width = 1024
-	st.height = 1024
-	st.seamless = true
-	st.noise = stars
-	var ramp := Gradient.new() # only the noise's peaks become stars (the shader keeps values > 0.9)
-	ramp.offsets = PackedFloat32Array([0.0, 0.8, 0.86])
-	ramp.colors = PackedColorArray([Color.BLACK, Color.BLACK, Color.WHITE])
-	st.color_ramp = ramp
-	m.set_shader_parameter("night_noise_01", st)
+	# No stars [Sir, 2026-11-14]: the shader maps its star texture by EYEDIR.xz, which
+	# collapses to one texel straight overhead, so stars only ever showed round
+	# the edges of the view (an empty patch at the crosshair). A black star map
+	# keeps the night sky a plain gradient with the dim clouds.
+	var no_stars := Image.create(4, 4, false, Image.FORMAT_L8)
+	m.set_shader_parameter("night_noise_01", ImageTexture.create_from_image(no_stars))
 	m.set_shader_parameter("night_noise_02", load(CLOUDS % 3))
 	var sky := Sky.new()
 	sky.sky_material = m
