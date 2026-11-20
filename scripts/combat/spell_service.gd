@@ -395,10 +395,13 @@ func start_flight(pg: Resource, slot: String, now: float) -> void:
 		if tg.health.dead or tg.get("body") == null or (tg.pos as Vector3).distance_to(at) > FLIGHT.pull_r: continue
 		var body: Node3D = tg.body
 		if not body is CharacterBody3D: continue
+		if world.effects != null: world.effects.apply(String(tg.id), CONCUSS_ID, FLIGHT.concuss_s, now, "player")
+		if bool(body.get("displace_immune")): # Kostas Mortus: no pull [Sir, 2026-11-15]
+			log.append({"spell": "flight_pull_resisted", "id": tg.id, "time": now})
+			continue
 		var a := TAU * float(k) / 6.0 + 0.4
 		body.global_position = at + Vector3(cos(a), 0, sin(a)) * (1.2 + 0.4 * (k / 6))
 		(body as CharacterBody3D).velocity = Vector3.ZERO
-		if world.effects != null: world.effects.apply(String(tg.id), CONCUSS_ID, FLIGHT.concuss_s, now, "player")
 		log.append({"spell": "flight_pull", "id": tg.id, "time": now})
 		k += 1
 	if world.get("vfx") != null:
@@ -483,7 +486,7 @@ func blast(spot: Vector3, r: float, dmg: float, effect: String, burn_s: float, k
 		if world.effects != null and not tg.health.dead and result in ["applied", "duplicate"]:
 			world.effects.apply(String(tg.id), effect, burn_s, now, "player", pow)
 		var body = tg.get("body")
-		if knock_to > 0.0 and body is CharacterBody3D and not tg.health.dead:
+		if knock_to > 0.0 and body is CharacterBody3D and not tg.health.dead and not bool(body.get("displace_immune")): # Mortus: no knockback
 			var off: Vector3 = (body as Node3D).global_position - spot
 			off.y = 0.0
 			if off.length() < 0.05: off = Vector3(1, 0, 0).rotated(Vector3.UP, rng.randf() * TAU)

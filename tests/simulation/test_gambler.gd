@@ -28,6 +28,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var s = c.session
 	var tree: SceneTree = c.get_tree()
 	s.meta.reset()
+	for id in ["heads_or_tails", "where_are_my_coins", "let_it_ride", "all_in"]: s.meta.unlock(id) # Explicit fixture grants, never production starters.
 	s.restart()
 	await tree.physics_frame
 	c.park_enemies()
@@ -46,12 +47,12 @@ static func run(check: Callable, c: Node3D) -> void:
 	reset_player.call()
 	steps(c, 0.2)
 	var pages := ["heads_or_tails", "where_are_my_coins", "let_it_ride", "all_in"]
-	check.call(pages.all(func(id): return s.grimoire.is_unlocked(id) and s.grimoire.page(id).rank_req == "D"), "the Gambler pages are unlocked from the start, all rank D")
+	check.call(pages.all(func(id): return s.grimoire.is_unlocked(id) and s.grimoire.page(id).rank_req == "D"), "the Gambler pages are unlocked by the test fixture, all rank D")
 	var now := func() -> float: return s.run.time
 
 	# ---- Let it Ride ---------------------------------------------------------------------------------
 	var lr: Resource = s.grimoire.page("let_it_ride")
-	check.call(pc.equip("spell_1", lr) == "ok" and lr.mp_cost == 0.0, "Let it Ride equips in a spell slot and costs no MP")
+	check.call(pc.equip("spell_3", lr) == "ok" and lr.mp_cost == 0.0, "Let it Ride equips in a spell slot and costs no MP")
 	var a := RandomNumberGenerator.new()
 	var b := RandomNumberGenerator.new()
 	a.seed = 0xD1CE
@@ -71,20 +72,20 @@ static func run(check: Callable, c: Node3D) -> void:
 	var mov0: float = s.stats.value("mov_spd", now.call())
 	var mas0: float = s.stats.value("spell_mastery", now.call())
 	g.forced = [4]
-	var r1: String = pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	var r1: String = pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	g.land(now.call()) # the die lands (its effects wait for it)
 	var t: float = now.call()
 	var high_ok: bool = is_equal_approx(pc._pow(t), pow0 * 2.0) and is_equal_approx(s.stats.value("atk_spd", t), minf(atk0 * 1.3, 12.0)) and is_equal_approx(s.stats.value("mov_spd", t), minf(mov0 * 1.3, 22.0)) and is_equal_approx(s.stats.value("spell_mastery", t), mas0 + 0.2)
 	check.call(r1 == "ok" and g.last_roll.outcome == "high" and high_ok and absf(g.buff_left(GS.HIGH_ID, t) - 20.0) < 0.01, "a 4: Gambler's High for 20 s (+100%% Pow, +30%% Atk Spd and Mov Spd, +20%% Mastery) %s" % str([r1, g.last_roll, pc._pow(t) / pow0, s.stats.value("atk_spd", t) / atk0, s.stats.value("mov_spd", t) / mov0, s.stats.value("spell_mastery", t) - mas0, g.buff_left(GS.HIGH_ID, t)]))
-	check.call(absf(pc.remaining("spell_1", t) - 5.0) < 0.01, "Let it Ride's cooldown: 5 s")
+	check.call(absf(pc.remaining("spell_3", t) - 5.0) < 0.01, "Let it Ride's cooldown: 5 s")
 	# [Sir, 2026-11-14] The die finishes rolling before the result takes effect.
 	s.stats.remove_sources(GS.BUFF_SOURCES)
-	pc.ready_at.erase("spell_1")
+	pc.ready_at.erase("spell_3")
 	g.forced = [5]
-	pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	var early: bool = g.rolling() and g.buff_left(GS.HIGH_ID, now.call()) == 0.0 and is_equal_approx(pc._pow(now.call()), pow0)
-	pc.ready_at.erase("spell_1")
-	var again: String = pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	pc.ready_at.erase("spell_3")
+	var again: String = pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	steps(c, 0.5)
 	var mid: bool = g.rolling() and g.buff_left(GS.HIGH_ID, now.call()) == 0.0
 	steps(c, 0.5)
@@ -102,16 +103,16 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(absf(g.buff_left(GS.HIGH_ID, t) - 20.0) < 0.01 and high_mods == 1, "the High again refreshes it to 20 s (one copy, no stacking with itself)")
 	# A low roll strips every buff, Cultivate included; the next cooldown is 3 s.
 	var cu: Resource = s.grimoire.page("cultivate")
-	pc.equip("skill_1", cu)
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, now.call())
-	pc.ready_at.erase("spell_1")
+	pc.equip("spell_2", cu)
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, now.call())
+	pc.ready_at.erase("spell_3")
 	g.forced = [2]
-	pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	g.land(now.call()) # the die lands (its effects wait for it)
 	t = now.call()
 	var stripped: bool = not g.has_buff(t) and t >= pc.cultivate_until and is_equal_approx(pc._pow(t), pow0)
-	check.call(g.last_roll.outcome == "low" and stripped and absf(pc.remaining("spell_1", t) - 3.0) < 0.01 and not g.addicted, "a 2: every buff ends (Cultivate too); the next cooldown is 3 s")
+	check.call(g.last_roll.outcome == "low" and stripped and absf(pc.remaining("spell_3", t) - 3.0) < 0.01 and not g.addicted, "a 2: every buff ends (Cultivate too); the next cooldown is 3 s")
 	# The streak: low, high, low is no Addiction; two lows in a row is.
 	g.roll(now.call(), 5)
 	g.land(now.call()) # the die lands (its effects wait for it)
@@ -138,11 +139,19 @@ static func run(check: Callable, c: Node3D) -> void:
 	var mod_ok: bool = s.stats.add_modifier("cultivate", "atk_spd", 1.15, 0.0, t + 10.0)
 	pc._cultivate(cu, t)
 	var fx_r: String = c.effects.apply("player", "Sage Arts", 5.0, t, "test")
-	var chant_ok: bool = s.progression.on_chant_success("magic_pow", 1)
 	g._buff(GS.HIGH, GS.HIGH_ID, t + 20.0)
 	var debuff_ok: bool = s.stats.add_modifier("concuss", "mov_spd", 0.2, 0.0, t + 0.5) # a debuff still lands
 	t = now.call()
-	check.call(not mod_ok and t >= pc.cultivate_until and fx_r == "blocked" and not chant_ok and not s.stats.can_rise("magic_pow") and g.buff_left(GS.HIGH_ID, t) == 0.0 and not g.has_buff(t) and s.stats.buffs_refused > refused0, "in Addiction no buff lands: stat buffs, Cultivate, buff effects and chant gains are all refused")
+	check.call(not mod_ok and t >= pc.cultivate_until and fx_r == "blocked" and g.buff_left(GS.HIGH_ID, t) == 0.0 and not g.has_buff(t) and s.stats.buffs_refused > refused0, "in Addiction no buff lands: stat buffs, Cultivate and buff effects are all refused")
+	# [Sir, 2026-11-15] The Grimoire (and with it every chant) will not open while Addiction lasts.
+	var gpanel: CanvasLayer = c.grimoire_panel
+	c.notices.clear()
+	s.handle_action("grimoire")
+	var shut: bool = not gpanel.visible and s.input.context == s.input.Context.GAMEPLAY
+	var told: bool = c.notices.any(func(n): return String(n[0]) == c.ADDICTION_GRIMOIRE)
+	s.stats.unspent = 0
+	var chant_r: Dictionary = gpanel.start_chant("magic_pow")
+	check.call(shut and told and chant_r.is_empty() and gpanel.mode != "chant", "in Addiction the Grimoire won't open (Tab shows \"%s\") and no chant can start" % c.ADDICTION_GRIMOIRE)
 	check.call(debuff_ok and is_equal_approx(pc._pow(t), pow0 * 0.1), "debuffs still land, and Addiction's own Pow x0.1 holds")
 	s.stats.remove_sources(["concuss"])
 	var pow_add: float = pc._pow(t)
@@ -153,29 +162,33 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.stats.buff_block = true
 	check.call(is_equal_approx(pc._pow(t), (pow0 + 50.0) * 0.1), "Addiction's x0.1 is applied last (after flat bonuses)")
 	s.stats.remove_sources(["probe"])
-	var gated: bool = pc.use_slot("skill_1", Vector2.ZERO, t) == "addicted" and not pc.can_cast() and not pc.rise_equipped() and not pc.sage_active(t)
+	var gate_r: String = pc.use_slot("spell_2", Vector2.ZERO, t)
+	var gated: bool = gate_r == "addicted" and not pc.can_cast() and not pc.rise_equipped() and not pc.sage_active(t)
 	var view: Dictionary = pc.slot_view(t)
-	check.call(gated and view.skill_1.state == "addicted" and view.basic.state == "addicted" and view.spell_1.state != "addicted", "Addiction: every other skill, attack and passive is off (Let it Ride stays)")
-	pc.ready_at.erase("spell_1")
+	check.call(gated and view.spell_2.state == "addicted" and view.basic.state == "addicted" and view.spell_3.state != "addicted", "Addiction: every other skill, attack and passive is off (Let it Ride stays) [%s, %s, %s, %s]" % [gate_r, view.spell_2.get("state", ""), view.basic.get("state", ""), view.spell_3.get("state", "")])
+	pc.ready_at.erase("spell_3")
 	g.forced = [6]
-	pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	g.land(now.call()) # the die lands (its effects wait for it)
 	t = now.call()
-	check.call(g.last_roll.outcome == "addicted" and g.buff_left(GS.JACKPOT_ID, t) == 0.0 and pc.remaining("spell_1", t) == 0.0 and g.addict_highs == 1, "in Addiction a 6 gives nothing, and Let it Ride has no cooldown")
+	check.call(g.last_roll.outcome == "addicted" and g.buff_left(GS.JACKPOT_ID, t) == 0.0 and pc.remaining("spell_3", t) == 0.0 and g.addict_highs == 1, "in Addiction a 6 gives nothing, and Let it Ride has no cooldown")
 	g.forced = [1]
-	pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	g.land(now.call()) # the die lands (its effects wait for it)
-	check.call(g.addicted and g.addict_highs == 1 and pc.remaining("spell_1", now.call()) == 0.0, "a low roll in Addiction does nothing extra")
+	check.call(g.addicted and g.addict_highs == 1 and pc.remaining("spell_3", now.call()) == 0.0, "a low roll in Addiction does nothing extra")
 	g.forced = [4]
-	pc.use_slot("spell_1", Vector2.ZERO, now.call())
+	pc.use_slot("spell_3", Vector2.ZERO, now.call())
 	g.land(now.call()) # the die lands (its effects wait for it)
 	t = now.call()
 	check.call(not g.addicted and g.last_roll.outcome == "recovered" and is_equal_approx(pc._pow(t), pow0) and pc.can_cast() and g.buff_left(GS.HIGH_ID, t) == 0.0, "two rolls above 3 in all (not in a row) end Addiction; Pow is back and that roll gives no buff")
-	check.call(absf(pc.remaining("spell_1", t) - 5.0) < 0.01, "after Addiction the cooldown is 5 s again")
-	var back_ok: bool = s.stats.add_modifier("probe2", "magic_pow", 1.2, 0.0, t + 1.0) and c.effects.apply("player", "Sage Arts", 1.0, t, "test") != "blocked" and s.stats.can_rise("magic_pow")
+	check.call(absf(pc.remaining("spell_3", t) - 5.0) < 0.01, "after Addiction the cooldown is 5 s again")
+	s.handle_action("grimoire")
+	var reopened: bool = c.grimoire_panel.visible
+	s.handle_action("grimoire")
+	var back_ok: bool = reopened and s.stats.add_modifier("probe2", "magic_pow", 1.2, 0.0, t + 1.0) and c.effects.apply("player", "Sage Arts", 1.0, t, "test") != "blocked" and s.stats.can_rise("magic_pow")
 	s.stats.remove_sources(["probe2"])
 	c.effects.clear_target("player")
-	check.call(back_ok, "once Addiction ends, buffs land again")
+	check.call(back_ok, "once Addiction ends, buffs land again and the Grimoire opens")
 
 	# ---- Heads or Tails ------------------------------------------------------------------------------
 	g.reset()
@@ -183,7 +196,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	reset_player.call()
 	steps(c, 0.3)
 	var ht: Resource = s.grimoire.page("heads_or_tails")
-	check.call(pc.equip("attack", ht) == "ok" and ht.kind == 0, "Heads or Tails takes the attack slot (in place of Scorch and Burn)")
+	check.call(pc.equip("spell_1", ht) == "ok" and ht.kind == 0, "Heads or Tails takes the attack slot (in place of Scorch and Burn)")
 	var fwd: Vector3 = pc.aim_dir()
 	fwd.y = 0.0
 	fwd = fwd.normalized()
@@ -264,13 +277,13 @@ static func run(check: Callable, c: Node3D) -> void:
 	reset_player.call()
 	steps(c, 0.2)
 	var ai: Resource = s.grimoire.page("all_in")
-	check.call(pc.equip("spell_2", ai) == "ok" and ai.kind == 2 and ai.rank_req == "D" and ai.cooldown_s == 60.0, "All In: a rank D spell, 1 min cooldown")
+	check.call(pc.equip("spell_4", ai) == "ok" and ai.kind == 2 and ai.rank_req == "D" and ai.cooldown_s == 60.0, "All In: a rank D spell, 1 min cooldown")
 	p.health.hp = p.health.max_hp
 	var hp_full: float = p.health.hp
-	var r_ai: String = pc.use_slot("spell_2", Vector2.ZERO, now.call())
+	var r_ai: String = pc.use_slot("spell_4", Vector2.ZERO, now.call())
 	t = now.call()
 	var hit_ai: String = p.health.apply(preload("res://scripts/combat/damage_packet.gd").new(990001, "sprite_x", "infected", 50.0, "bite"), t)
-	check.call(r_ai == "ok" and absf(p.health.hp - hp_full * 0.01) < 0.01 and hit_ai == "immune" and absf(pc.remaining("spell_2", t) - 60.0) < 0.05, "All In: 99%% of current HP gone (%.1f left), Invincible, 60 s cooldown" % p.health.hp)
+	check.call(r_ai == "ok" and absf(p.health.hp - hp_full * 0.01) < 0.01 and hit_ai == "immune" and absf(pc.remaining("spell_4", t) - 60.0) < 0.05, "All In: 99%% of current HP gone (%.1f left), Invincible, 60 s cooldown" % p.health.hp)
 	c.publish(DT)
 	var aura_in: bool = c._gfx.has("all_in") and c._gfx["all_in"].visible
 	steps(c, 10.1)
@@ -279,12 +292,12 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(bust and absf(s.stats.value("mov_spd", t) - mov0 * 0.3) < 0.01 and absf(s.stats.value("atk_spd", t) - atk0 * 0.3) < 0.01 and absf(p.health.hp - hp_full * 0.01) < 0.01, "no buff when the Invincibility ends: bust, -70% Mov Spd and Atk Spd, the HP stays lost")
 	steps(c, 5.1)
 	check.call(is_equal_approx(s.stats.value("mov_spd", now.call()), mov0), "the bust lasts 5 s")
-	pc.ready_at.erase("spell_2")
+	pc.ready_at.erase("spell_4")
 	p.health.hp = p.health.max_hp
-	pc.use_slot("spell_2", Vector2.ZERO, now.call())
+	pc.use_slot("spell_4", Vector2.ZERO, now.call())
 	steps(c, 4.0)
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, now.call()) # Cultivate: still active when the 10 s end
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, now.call()) # Cultivate: still active when the 10 s end
 	steps(c, 6.2)
 	t = now.call()
 	var won: bool = g.all_in_log[-1].outcome == "won"
@@ -316,8 +329,8 @@ static func run(check: Callable, c: Node3D) -> void:
 	await tree.physics_frame
 	steps(c, 0.2)
 	check.call(g.purse == 10 and g.spills == 0, "10 coins and no buff: they stay in the pocket")
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, now.call()) # Cultivate: a buff
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, now.call()) # Cultivate: a buff
 	steps(c, 2.0 * DT)
 	t = now.call()
 	var heavy_ok: bool = c.effects.has(near1.enemy_id, GS.HEAVY_ID, t) and c.effects.has(near2.enemy_id, GS.HEAVY_ID, t) and not c.effects.has(far1.enemy_id, GS.HEAVY_ID, t)
@@ -356,6 +369,38 @@ static func run(check: Callable, c: Node3D) -> void:
 		var n: Vector3 = hud.die.FACES[f]
 		if not (hud.die.show_basis(f) * n).is_equal_approx(Vector3(0, 0, 1)): die_basis_ok = false
 	check.call(die_basis_ok, "the die settles with the rolled face toward the camera (all six faces)")
+	# [Sir, 2026-11-15] Addiction beginning with the Grimoire open shuts it.
+	g.reset()
+	s.handle_action("grimoire")
+	var was_open: bool = c.grimoire_panel.visible
+	g.roll(now.call(), 1)
+	g.land(now.call())
+	g.roll(now.call(), 2)
+	g.land(now.call())
+	check.call(was_open and g.addicted and not c.grimoire_panel.visible and s.input.context == s.input.Context.GAMEPLAY, "Addiction beginning with the Grimoire open shuts it")
+	# The five gambling sounds exist and play: dice rattle, coin clink, ka-ching, jackpot fanfare, Addiction thud.
+	g.reset()
+	var sx: Node3D = c.sfx
+	sx.played.clear()
+	g.roll(now.call(), 6)
+	g.land(now.call())
+	g.roll(now.call(), 1)
+	g.land(now.call())
+	g.roll(now.call(), 2)
+	g.land(now.call())
+	g.reset()
+	c.park_enemies()
+	var se := put(c, ids[0], p.global_position + Vector3(0, 0, -6))
+	await tree.physics_frame
+	var stg: Dictionary = c.combat_targets().filter(func(x): return x.id == se.enemy_id)[0]
+	g.heads_hit(stg, 1.0, now.call())
+	g.tails_blast(se.global_position, 1.0, 100.0, now.call())
+	var sounds := ["dice_rattle", "coin_clink", "ka_ching", "jackpot", "addiction_thud"]
+	var counts: Array = sounds.map(func(r): return sx.count(r))
+	var streams_ok: bool = sounds.all(func(r): return sx.streams.has(r) and sx.streams[r] != null)
+	check.call(streams_ok and counts[0] == 3 and counts.slice(1).all(func(n): return n >= 1), "the gambling sounds exist and play: %s" % str(Array(sounds).map(func(r): return "%s x%d" % [r, sx.count(r)])))
+	g.reset()
+	c.park_enemies()
 	var gp: CanvasLayer = c.grimoire_panel
 	var rows_ok: bool = pages.all(func(id): return gp.page_stats(id).size() >= 3)
 	var heads_row: Array = gp.page_stats("heads_or_tails")[0]

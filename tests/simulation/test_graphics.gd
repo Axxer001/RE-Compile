@@ -13,7 +13,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	st.reset()
 	await tree.process_frame
 	var g: Dictionary = st.gfx
-	check.call(g.preset == "high" and int(g.pixel_scale) == 3 and bool(g.vsync) and int(g.fps_cap) == 0 and is_equal_approx(float(g.fov), 90.0) and int(g.shadows) == 2 and bool(g.volumetric_fog) and is_equal_approx(float(g.tree_distance), 40.0) and int(g.effects) == 2 and bool(g.colour16) and int(g.film_grain) == 2 and bool(g.camera_shake), "graphics defaults: High preset, pixel scale 3x, VSync on, no cap, 90 deg FOV, the game as it was")
+	check.call(g.preset == "high" and not g.has("pixel_scale") and not g.has("colour16") and bool(g.vsync) and int(g.fps_cap) == 0 and is_equal_approx(float(g.fov), 90.0) and int(g.shadows) == 2 and bool(g.volumetric_fog) and is_equal_approx(float(g.tree_distance), 40.0) and int(g.effects) == 2 and int(g.film_grain) == 2 and bool(g.camera_shake), "graphics defaults: High preset, pixel scale 3x, VSync on, no cap, 90 deg FOV, the game as it was")
 	var win0: Vector2i = DisplayServer.window_get_size()
 	var fps0: int = Engine.max_fps
 
@@ -35,21 +35,18 @@ static func run(check: Callable, c: Node3D) -> void:
 	st.set_value("gfx_shadows", 1)
 	check.call(g.preset == "custom" and int(g.shadows) == 1 and is_equal_approx(moon.directional_shadow_max_distance, 25.0), "changing one quality setting makes the preset Custom (low shadows: 25 m)")
 	# Look and display settings.
-	st.set_value("gfx_pixel_scale", 2)
 	st.set_value("gfx_fov", 100.0)
-	st.set_value("gfx_colour16", false)
 	st.set_value("gfx_film_grain", 0)
 	st.set_value("gfx_camera_shake", false)
 	await tree.process_frame
 	var lo: CanvasLayer = c.lofi
-	check.call(lo.container.stretch_shrink == 2 and is_equal_approx(c.player.tuning.fov, 100.0) and not c.art.post.get_shader_parameter("colour16") and is_equal_approx(float(c.art.post.get_shader_parameter("grain")), 0.0) and not lo.kicks_enabled, "pixel scale 2x, FOV 100, 16-bit colour off, no film grain, no camera shake: all applied at once")
+	check.call(lo.container.stretch_shrink == 1 and is_equal_approx(c.player.tuning.fov, 100.0) and c.art.post.get_shader_parameter("colour16") == null and is_equal_approx(float(c.art.post.get_shader_parameter("grain")), 0.0) and not lo.kicks_enabled, "native resolution (no pixel scale or 16-bit colour), FOV 100, no film grain, no camera shake: all applied at once")
 	check.call(DisplayServer.window_get_size() == win0 and Engine.max_fps == fps0, "window size, VSync and frame cap are not touched while a test drives the game")
 	# Clamps.
-	st.set_value("gfx_pixel_scale", 9)
 	st.set_value("gfx_fov", 20.0)
 	st.set_value("gfx_fps_cap", 77)
 	st.set_value("gfx_tree_distance", 500.0)
-	check.call(int(g.pixel_scale) == 4 and is_equal_approx(float(g.fov), 70.0) and int(g.fps_cap) == 0 and is_equal_approx(float(g.tree_distance), 60.0), "out-of-range values are clamped (pixel scale 4, FOV 70, frame cap unlimited, trees 60 m)")
+	check.call(is_equal_approx(float(g.fov), 70.0) and int(g.fps_cap) == 0 and is_equal_approx(float(g.tree_distance), 60.0), "out-of-range values are clamped (FOV 70, frame cap unlimited, trees 60 m)")
 	# Save and load.
 	st.set_value("gfx_window_mode", 1)
 	st.set_value("gfx_window_size", 2)
@@ -57,7 +54,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(st.save(path) == OK, "graphics settings save")
 	var t: RefCounted = st.get_script().new()
 	t.load_from(path)
-	check.call(int(t.gfx.window_mode) == 1 and int(t.gfx.window_size) == 2 and int(t.gfx.pixel_scale) == 4 and t.gfx.preset == "custom" and not bool(t.gfx.camera_shake), "graphics settings round-trip through the settings file")
+	check.call(int(t.gfx.window_mode) == 1 and int(t.gfx.window_size) == 2 and t.gfx.preset == "custom" and not bool(t.gfx.camera_shake), "graphics settings round-trip through the settings file")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	# The Graphics tab.
 	var panel: CanvasLayer = SettingsPanel.new()
@@ -65,7 +62,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	panel.setup(st)
 	panel.open()
 	panel.show_tab("graphics")
-	var keys := ["preset", "window_mode", "window_size", "pixel_scale", "vsync", "fps_cap", "fov", "shadows", "volumetric_fog", "tree_distance", "grass_distance", "effects", "colour16", "film_grain", "camera_shake"]
+	var keys := ["preset", "window_mode", "window_size", "vsync", "fps_cap", "fov", "shadows", "volumetric_fog", "tree_distance", "grass_distance", "effects", "film_grain", "camera_shake"]
 	var all_there: bool = keys.all(func(k): return panel.gfx_widgets.has(k))
 	var shown: bool = panel.graphics_box.get_parent().visible and panel.controls_nodes.all(func(n): return not n.visible)
 	var ob: OptionButton = panel.gfx_widgets.preset

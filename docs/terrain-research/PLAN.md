@@ -1,5 +1,10 @@
 # Minecraft Java + Don't Starve Together → RE:Compile terrain research plan
 
+> Current scope (2026-11-16): the forest is now 250 × 250 m, with fewer hostiles and trees, no pathways, and hills outside the camp footprint. See [implementation and validation](FOREST_250M.md). Earlier size targets and captures below are historical.
+
+> Scope update (2026-11-14): the user now targets a 500 × 500 m forest and more than 200 hostiles. Follow [the terrain implementation plan](TERRAIN_500M_PLAN.md) for current scope, source-study findings, completed-fix status and the implementation queue. The 150 m-only scope and pending-audit status below describe the earlier research plan.
+
+
 Prepared: 2026-11-14, Asia/Manila. Status: planned; no game benchmark or source audit completed by this document.
 
 ## Objective and scope

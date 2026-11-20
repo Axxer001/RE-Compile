@@ -8,7 +8,7 @@ extends SceneTree
 # the pause menu; find and unlock Quick Step; kill 20 Sprites for rank D (the
 # rank banner); find and unlock Ring of Fire and Sage Arts, equip them; one
 # Spell Chant (the stat rises, no EXP); Reset stats refunds exactly; cast the
-# Ring; then die, and check the death model (pages, rank, chant tier kept;
+# Ring; then die, and check the death model (pages and rank kept, chant tiers back to 1;
 # level, points, loadout lost), the camp respawn at full HP/MP, and a new
 # forest. Every step is asserted.
 #   godot --headless --fixed-fps 60 --path . -s res://tests/playthrough/run_playthrough.gd
@@ -35,6 +35,7 @@ var lowest_hp := INF
 var banners: Array = []
 var hit_log: Array = []
 var rng_seed := 20261112
+const TEST_HP_MULT := 5.0 # test-only toughness for the bot (see run()) [Sir, 2026-11-19]
 var dodges := 0
 
 func check(condition: bool, label: String) -> void:
@@ -138,10 +139,20 @@ func about_to_dive() -> CharacterBody3D:
 			return e
 	return null
 
+# A Forest Ghoul's arrow about to land [2026-11-15b]: the bot sidesteps it with
+# the same dash a player would (i-frames, then out of the arrow's line).
+func incoming_arrow() -> Vector3:
+	if p().dash_charges <= 0: return Vector3.INF
+	var chest: Vector3 = p().global_position + Vector3(0, 1.0, 0)
+	for a in c.arrows.arrows:
+		var to: Vector3 = chest - (a.pos as Vector3)
+		if to.length() < float(a.speed) * 0.3 + 1.0 and to.normalized().dot(a.dir) > 0.8: return a.pos
+	return Vector3.INF
+
 var _dodge_left := true
-func dodge(diver: CharacterBody3D) -> void:
+func dodge(from: Vector3) -> void:
 	release_all()
-	look_at_point(diver.global_position + Vector3(0, 1.0, 0))
+	look_at_point(from + Vector3(0, 1.0, 0))
 	var side := KEY_A if _dodge_left else KEY_D
 	_dodge_left = not _dodge_left
 	dodges += 1
@@ -174,7 +185,11 @@ func fight(foe: CharacterBody3D) -> bool:
 			return false
 		var diver := about_to_dive()
 		if diver != null:
-			await dodge(diver)
+			await dodge(diver.global_position)
+			continue
+		var arrow := incoming_arrow()
+		if arrow != Vector3.INF:
+			await dodge(arrow)
 			continue
 		var aim: Vector3 = foe.global_position + Vector3(0, 1.0, 0)
 		var d := flat(foe.global_position).distance_to(flat(p().global_position))
@@ -199,11 +214,10 @@ func fight(foe: CharacterBody3D) -> bool:
 			no_hit += 1
 			if c.pcombat.special_remaining(c.session.run.time) <= 0.0 and d > 4.0: keys[MOUSE_BUTTON_RIGHT] = true
 			else: keys.erase(MOUSE_BUTTON_RIGHT)
-			if c.pcombat.remaining("skill_1", c.session.run.time) <= 0.0: keys[KEY_E] = true
-			else: keys.erase(KEY_E)
+			# (no Cultivate mid-fight since 2026-11-20: it is page 2 of the held book,
+			# and turning to it would stop the basic attack for the turn)
 		await step()
 	release_all()
-	keys.erase(KEY_E)
 	await step()
 	return true
 
@@ -219,9 +233,15 @@ func goto(target: Vector3, label: String) -> bool:
 		if p().health.dead:
 			check(false, "%s: died" % label)
 			return false
+		var arrow := incoming_arrow()
+		if arrow != Vector3.INF:
+			await dodge(arrow)
+			continue
 		var foe := hunting_me()
 		if foe != null:
-			if not await fight(foe): return false
+			if not await fight(foe):
+				check(false, "%s: a fight on the way ended in death or ran out of time" % label)
+				return false
 			_path.clear()
 			best = INF
 			continue
@@ -236,6 +256,10 @@ func goto(target: Vector3, label: String) -> bool:
 			since_progress = 0
 		else:
 			since_progress += 1
+			if since_progress % 60 == 0 and p().is_on_wall(): # pressed into a trunk or rock edge for 1 s: hop and skip the corner, as a player would
+				if not _path.is_empty(): _path.pop_front()
+				_replan = 30
+				await tap(KEY_SPACE)
 			if since_progress > 360:
 				check(false, "%s: stuck at %s (%.2f m left)" % [label, pos, left])
 				return false
@@ -313,11 +337,19 @@ func run() -> void:
 		if applied > 0.0: hit_log.append("%s %.0f" % [pk.kind, applied]))
 	check(c.world_kind == "forest" and p().global_position.distance_to(c.spawn.at) < 0.1 and s.progression.rank == "E" and s.progression.level == 1, "a fresh run at the camp: level 1, rank E")
 	check(c.alive_count() >= 6, "the forest is live: %d Sprites roaming" % c.alive_count())
+	# TEST-ONLY toughness [Sir, 2026-11-19]: the route to the first page pulls 11-17
+	# enemies at once, more than this bot can kite. This suite checks the loop
+	# (pages, rank, chant, death model), not balance, so the bot's player gets x3
+	# Max HP for the life (the game is unchanged; lowest HP and hits are logged).
+	s.stats.add_modifier("playthrough_test_hp", "max_hp", TEST_HP_MULT, 0.0, INF)
+	p().health.max_hp = float(s.stats.value("max_hp", s.run.time))
+	p().health.hp = p().health.max_hp
+	log.append("test-only x%.0f Max HP: %.0f" % [TEST_HP_MULT, p().health.max_hp])
 
 	# 1. Quick Step, by the camp: pick it up, unlock it, equip it on Q.
 	if not await pick_up("quick_step"): return finish()
 	if not await unlock("quick_step"): return finish()
-	check(c.grimoire_panel.equip_selected("skill_2") == "ok" and String(c.pcombat.loadout.skill_2.id) == "quick_step", "equipped Quick Step on [Q]")
+	check(c.grimoire_panel.equip_selected("spell_3") == "ok" and String(c.pcombat.loadout.spell_3.id) == "quick_step", "equipped Quick Step on page 3")
 	spend_points()
 
 	# 2. The rank mission: 20 kills, fighting through the real loop.
@@ -344,14 +376,16 @@ func run() -> void:
 	if not await unlock("sage_arts"): return finish()
 	var gp: CanvasLayer = c.grimoire_panel
 	gp.select_page("ring_of_fire")
-	var e1: String = gp.equip_selected("spell_1")
+	var e1: String = gp.equip_selected("spell_4")
 	gp.select_page("sage_arts")
 	var e2: String = gp.equip_selected("passive")
-	check(e1 == "ok" and e2 == "ok" and String(c.pcombat.loadout.spell_1.id) == "ring_of_fire" and String(c.pcombat.loadout.passive.id) == "sage_arts", "at rank D: Ring of Fire on [1], Sage Arts on [P] (%s, %s)" % [e1, e2])
+	check(e1 == "ok" and e2 == "ok" and String(c.pcombat.loadout.spell_4.id) == "ring_of_fire" and String(c.pcombat.loadout.passive.id) == "sage_arts", "at rank D: Ring of Fire on page 4, Sage Arts on [P] (%s, %s)" % [e1, e2])
 
 	# 4. One Spell Chant: with no points left, [+] on Magic Pow starts it.
 	while hunting_me() != null:
-		if not await fight(hunting_me()): return finish()
+		if not await fight(hunting_me()):
+			check(false, "before the chant: the fight ended in death or ran out of time (a run cut short is not a pass)")
+			return finish()
 	spend_points()
 	s.handle_event(_key(KEY_TAB))
 	await step()
@@ -371,17 +405,24 @@ func run() -> void:
 	for k in st.chant_points: owed += int(st.chant_points[k])
 	gp.reset_stats()
 	var refunded: int = gp.reset_stats()
-	var all_base: bool = st.points.values().all(func(v): return int(v) == 0) and st.chant_points.values().all(func(v): return int(v) == 0) and is_equal_approx(st.base_value("magic_pow"), 100.0) # base: a live Cultivate buff is not a stat
+	var all_base: bool = st.points.values().all(func(v): return int(v) == 0) and st.chant_points.values().all(func(v): return int(v) == 0) and is_equal_approx(st.base_value("magic_pow"), 1000.0) # base (x10 rescale [Sir, 2026-11-15]): a live Cultivate buff is not a stat
 	check(st.unspent == owed and all_base and refunded >= 1, "Reset stats: every stat back to base, %d points back (allocated + chants)" % owed)
 	spend_points()
 	s.handle_event(_key(KEY_TAB))
 	await step()
 
-	# 5. Cast the Ring of Fire from [1].
+	# 5. Cast the Ring of Fire: 4 turns the held book to page 4 (0.5 s), LMB casts it.
 	var casts0: int = int(c.pcombat.casts.get("ring_of_fire", 0))
 	var mp0: float = c.pcombat.mp
-	await tap(KEY_1)
-	check(int(c.pcombat.casts.get("ring_of_fire", 0)) == casts0 + 1 and c.projectiles.rings.size() >= 1 and c.pcombat.mp < mp0, "[1] casts the Ring of Fire: orbs round the player, MP spent")
+	await tap(KEY_4)
+	var turned := 0
+	while c.pcombat.turning(c.session.run.time) and turned < 240: # however long the turn takes (its timing lives in player_combat)
+		await step()
+		turned += 1
+	await step()
+	var open4: bool = c.pcombat.active == 3
+	await tap(MOUSE_BUTTON_LEFT)
+	check(open4 and int(c.pcombat.casts.get("ring_of_fire", 0)) == casts0 + 1 and c.projectiles.rings.size() >= 1 and c.pcombat.mp < mp0, "4 turns to page 4 in %d ticks; LMB casts the Ring of Fire: orbs round the player, MP spent" % turned)
 	check(not p().health.dead and deaths == 0 and not out_of_time(), "the whole loop in one life, %.0f s of game time (lowest HP %.0f)" % [frames / 60.0, lowest_hp])
 	log.append("hunts %d, kills %d, level %d, frames %d" % [hunts, s.progression.kills, s.progression.level, frames])
 	release_all()
@@ -397,13 +438,14 @@ func run() -> void:
 	c.death_panel.button.pressed.emit()
 	await step()
 	await step()
-	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == 15 and int(s.meta.chant_tier.get("magic_pow", 0)) == 1
-	var lost: bool = s.progression.level == 1 and s.progression.kills == 0 and s.stats.unspent == 0 and c.pcombat.loadout.spell_1 == null and c.pcombat.loadout.passive == null and c.pcombat.loadout.skill_2 == null
-	check(kept, "after death, kept: rank D, all 15 pages unlocked, the Magic Pow chant tier [R5]")
+	var learned: Array = s.meta.START_PAGES + ["quick_step", "ring_of_fire", "sage_arts"] # the start pages and the three this run found
+	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == learned.size() and learned.all(func(id): return id in s.meta.unlocked) and s.meta.chant_tier.is_empty()
+	var lost: bool = s.progression.level == 1 and s.progression.kills == 0 and s.stats.unspent == 0 and c.pcombat.loadout.spell_4 == null and c.pcombat.loadout.passive == null and c.pcombat.loadout.spell_3 == null
+	check(kept, "after death, kept: rank D, the start pages and the 3 found; the chant tiers are back to tier 1 [R5; Sir, 2026-11-14] (rank %s, %d unlocked, tiers %s)" % [s.meta.rank, s.meta.unlocked.size(), s.meta.chant_tier])
 	check(lost and lvl_dead > 1, "after death, lost: level %d -> 1, kills, stat points and the loadout [R5]" % lvl_dead)
 	check(not p().health.dead and p().global_position.distance_to(c.spawn.at) < 0.1 and is_equal_approx(p().health.hp, p().health.max_hp) and is_equal_approx(c.pcombat.mp, c.pcombat.max_mp()), "respawned at the camp with full HP and MP")
 	check(c.map_seed != seed_dead and c.map.trees.slice(0, 5) != trees_dead and Forest.rule_violations(c.map).is_empty(), "a new seed, a new forest (still a valid map)")
-	check(s.grimoire.page("ring_of_fire").rank_ok(s.progression.rank) and c.grimoire_panel.equip_selected("spell_1") != "rank", "rank D is kept: Ring of Fire can be equipped again in the new run")
+	check(s.grimoire.page("ring_of_fire").rank_ok(s.progression.rank) and c.grimoire_panel.equip_selected("spell_4") != "rank", "rank D is kept: Ring of Fire can be equipped again in the new run")
 	finish()
 
 func _key(k: int) -> InputEventKey:

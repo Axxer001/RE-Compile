@@ -34,14 +34,14 @@ static func run(check: Callable, c: Node3D) -> void:
 	var ep: CanvasLayer = c.effects_panel
 
 	# ---- the Effects tab -------------------------------------------------------------------
-	check.call(Settings.LAYOUT == 3 and "effects_tab" in Settings.ACTIONS and s.input.action_for_event(key(KEY_T)) == "effects_tab", "T is the rebindable Effects action (key layout 3) [R14]")
+	check.call(Settings.LAYOUT >= 3 and "effects_tab" in Settings.ACTIONS and s.input.action_for_event(key(KEY_T)) == "effects_tab", "T is the rebindable Effects action (key layout 3+) [R14]")
 	s.handle_event(key(KEY_T))
 	s.step(DT)
 	check.call(ep.visible and s.input.context == InputRouter.Context.OVERLAY and ep.shown_text() == "No active effects." and ep.list.get_child(0).name == "Empty", "T opens the Effects tab: 'No active effects.' with none")
 	s.handle_event(key(KEY_T))
 	check.call(not ep.visible and s.input.context == InputRouter.Context.GAMEPLAY, "T again closes it")
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, s.run.time) # Cultivate, 10 s
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, s.run.time) # Cultivate, 10 s
 	c.concuss(s.run.time + 1.5, 0.2)
 	s.handle_event(key(KEY_T))
 	s.step(DT)
@@ -71,8 +71,8 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(gp.tab == "grimoire" and gp.VIEWS == ["grimoire", "player_id"], "the Tab panel has only the Grimoire and the Player ID; Effects is T's own")
 	s.handle_action("grimoire")
 	# The T panel draws each icon at a fixed 48 px tile (it once drew the file's 128 px).
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, s.run.time)
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, s.run.time)
 	s.handle_event(key(KEY_T))
 	s.step(DT)
 	var tile: Control = ep.list.find_child("Tile", true, false)

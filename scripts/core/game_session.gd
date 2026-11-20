@@ -85,6 +85,10 @@ func handle_event(event: InputEvent) -> void:
 func handle_action(action: String) -> void:
 	# The Grimoire overlay opens only once the world has one (P5).
 	if action == "grimoire" and input.context == InputRouter.Context.GAMEPLAY and not world.has_method("show_grimoire"): return
+	# Gambling Addiction [Sir, 2026-11-15]: the Grimoire will not open while it lasts.
+	if action == "grimoire" and input.context == InputRouter.Context.GAMEPLAY and world.has_method("grimoire_blocked") and world.grimoire_blocked() != "":
+		_call("show_notice", [world.grimoire_blocked(), 1.4])
+		return
 	var outcome := input.press(action)
 	match outcome:
 		"paused", "resumed":
@@ -96,11 +100,9 @@ func handle_action(action: String) -> void:
 		"overlay_closed":
 			_call("hide_overlays")
 
-# A hit with an overlay open [Sir R1]: the world may keep it open (a page
-# unlock restarts instead); otherwise the overlay closes.
+# Applied damage interrupts every overlay, including unfinished puzzles and chants.
 func on_player_damaged() -> void:
 	if input.context == InputRouter.Context.OVERLAY:
-		if world.has_method("overlay_hit") and world.overlay_hit(): return
 		input.close_overlay()
 		_call("hide_overlays")
 

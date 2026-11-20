@@ -43,7 +43,13 @@ const BINBUN := {"basic": {"scene": BB + "ExplosionFX/effects/air/vfx_air_explos
 	# The Gambler set [2026-11-14]: gold hits, Tails' 20 m ground burst and its big impact.
 	"coin_hit": {"scene": BB + "StylizedHitFX/effects/hit/vfx_hit_01.tscn", "scale": 0.5, "color": Color(1.0, 0.8, 0.25)},
 	"tails_blast": {"scene": BB + "ExplosionFX/effects/ground/vfx_ground_explosion_01.tscn", "scale": 8.0, "color": Color(1.0, 0.78, 0.2)},
-	"tails_impact": {"scene": BB + "StylizedHitFX/effects/big_impact/vfx_big_impact_01.tscn", "scale": 3.0, "color": Color(1.0, 0.85, 0.3)}}
+	"tails_impact": {"scene": BB + "StylizedHitFX/effects/big_impact/vfx_big_impact_01.tscn", "scale": 3.0, "color": Color(1.0, 0.85, 0.3)},
+	# The Dark Forest roster [2026-11-15]: an enemy's hit on the player, an arrow's impact.
+	"enemy_hit": {"scene": BB + "StylizedHitFX/effects/hit/vfx_hit_02.tscn", "scale": 0.6, "color": Color(0.75, 0.3, 1.0)},
+	"arrow_hit": {"scene": BB + "StylizedHitFX/effects/impact/vfx_impact_01.tscn", "scale": 0.4, "color": Color(0.45, 1.0, 0.45)},
+	# Kostas Mortus: ExplosionFX ground streaks as a charge sets off or slams, StylizedHitFX big impact.
+	"mortus_dust": {"scene": BB + "ExplosionFX/effects/ground/vfx_ground_explosion_01.tscn", "scale": 1.2, "color": Color(0.5, 0.35, 0.55)},
+	"mortus_impact": {"scene": BB + "StylizedHitFX/effects/big_impact/vfx_big_impact_02.tscn", "scale": 1.6, "color": Color(0.7, 0.3, 0.9)}}
 # Fireballs [Sir, 2026-11-13]: DarkMagicFX. The basic attack is the evil
 # projectile (its own fire-orange palette), the special the bigger evil ball,
 # Ring of Fire's orbs small evil balls. Binbun projectiles fly along their +X
@@ -96,11 +102,11 @@ const LOOPS := {
 # p95, the projectile core +14.7 ms when the whole pool wore it). Pools stay small
 # and only ONE special fireball wears the core at a time (the special's 15 s
 # cooldown means one in flight in real play; the rest keep the cheap streak).
-const BINBUN_POOL := {"basic": 4, "special": 2, "step": 2, "missile_hit": 4, "cataclysm": 1, "phoenix_impact": 1, "coin_hit": 4, "tails_blast": 1, "tails_impact": 1} # basic hits are constant: they keep the cheap built-in burst (Binbun basic cost +3.7 ms p95)
+const BINBUN_POOL := {"basic": 4, "special": 2, "step": 2, "missile_hit": 4, "cataclysm": 1, "phoenix_impact": 1, "coin_hit": 4, "tails_blast": 1, "tails_impact": 1, "enemy_hit": 4, "arrow_hit": 4, "mortus_dust": 2, "mortus_impact": 2} # basic hits are constant: they keep the cheap built-in burst (Binbun basic cost +3.7 ms p95)
 const CORE_MAX := 1
 var _cores: Array = []
-var _bb := {"basic": [], "special": [], "step": [], "missile_hit": [], "cataclysm": [], "phoenix_impact": [], "coin_hit": [], "tails_blast": [], "tails_impact": []}
-var _next_bb := {"basic": 0, "special": 0, "step": 0, "missile_hit": 0, "cataclysm": 0, "phoenix_impact": 0, "coin_hit": 0, "tails_blast": 0, "tails_impact": 0}
+var _bb := {"basic": [], "special": [], "step": [], "missile_hit": [], "cataclysm": [], "phoenix_impact": [], "coin_hit": [], "tails_blast": [], "tails_impact": [], "enemy_hit": [], "arrow_hit": [], "mortus_dust": [], "mortus_impact": []}
+var _next_bb := {"basic": 0, "special": 0, "step": 0, "missile_hit": 0, "cataclysm": 0, "phoenix_impact": 0, "coin_hit": 0, "tails_blast": 0, "tails_impact": 0, "enemy_hit": 0, "arrow_hit": 0, "mortus_dust": 0, "mortus_impact": 0}
 const AURA_AMOUNT := 8
 
 var enabled := true
@@ -544,6 +550,7 @@ func ring(center: Vector3, radius: float, color: Color) -> Node3D:
 	m.emission = color
 	m.emission_energy_multiplier = 2.0
 	m.no_depth_test = true # a targeting mark: seen through grass and trunks
+	m.disable_fog = true # and through the night fog (opaque at 30 m since 2026-11-20): Flight aims at it from 30 m up
 	m.render_priority = 2
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -840,3 +847,58 @@ static func coin_pile() -> Node3D:
 		(mi as MeshInstance3D).material_override = _coin_mat()
 	p.visible = false
 	return p
+
+# ---- the Dark Forest roster [2026-11-15] ---------------------------------------------------------
+func enemy_hit(at: Vector3, _now: float) -> void:
+	if enabled and is_inside_tree(): _play_burst("enemy_hit", at)
+
+func mortus_impact(at: Vector3, _now: float) -> void:
+	if not enabled or not is_inside_tree(): return
+	_play_burst("mortus_dust", Vector3(at.x, at.y - 1.0, at.z))
+	_play_burst("mortus_impact", at)
+
+func arrow_hit(at: Vector3, _now: float) -> void:
+	if enabled and is_inside_tree(): _play_burst("arrow_hit", at)
+
+# A Forest Ghoul's arrow: a wooden shaft and head built in code (no arrow mesh is
+# installed), no trail [Sir 2026-11-15b]; a Burst arrow's glowing green head is larger.
+static var _arrow_parts := []
+func arrow_visual(homing: bool, at: Vector3, dir: Vector3) -> Node3D:
+	if not is_inside_tree(): return null
+	if _arrow_parts.is_empty():
+		var shaft := CylinderMesh.new()
+		shaft.top_radius = 0.012
+		shaft.bottom_radius = 0.012
+		shaft.height = 0.75
+		var head := CylinderMesh.new()
+		head.top_radius = 0.0
+		head.bottom_radius = 0.03
+		head.height = 0.08
+		var wood := StandardMaterial3D.new()
+		wood.albedo_color = Color(0.42, 0.28, 0.14)
+		var tip := StandardMaterial3D.new()
+		tip.albedo_color = Color(0.35, 1.0, 0.45)
+		tip.emission_enabled = true
+		tip.emission = Color(0.35, 1.0, 0.45)
+		tip.emission_energy_multiplier = 1.5
+		_arrow_parts = [shaft, head, wood, tip]
+	var n := Node3D.new()
+	n.name = "Arrow"
+	var s := MeshInstance3D.new()
+	s.mesh = _arrow_parts[0]
+	s.material_override = _arrow_parts[2]
+	s.rotation.x = PI * 0.5 # along -Z (the flight)
+	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(s)
+	var h := MeshInstance3D.new()
+	h.mesh = _arrow_parts[1]
+	h.material_override = _arrow_parts[3]
+	h.rotation.x = -PI * 0.5
+	h.position = Vector3(0, 0, -0.41)
+	if homing: h.scale = Vector3.ONE * 2.0
+	h.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(h)
+	add_child(n)
+	n.global_position = at
+	if absf(dir.normalized().y) < 0.999: n.look_at(at + dir, Vector3.UP)
+	return n

@@ -421,7 +421,14 @@ func enter() -> void:
 	var moon := _moon()
 	if e:
 		_night = {"fog_density": e.fog_density, "fog_light_color": e.fog_light_color, "ambient_light_color": e.ambient_light_color,
-			"ambient_light_energy": e.ambient_light_energy, "vfog": e.volumetric_fog_density, "vfog_albedo": e.volumetric_fog_albedo}
+			"ambient_light_energy": e.ambient_light_energy, "vfog": e.volumetric_fog_density, "vfog_albedo": e.volumetric_fog_albedo,
+			"bg": e.background_color, "fog_begin": e.fog_depth_begin, "fog_end": e.fog_depth_end, "far": main.player.camera.far}
+		# Daylight [2026-11-20]: no sky shader any more: a day-blue background and fog
+		# pushed out to the horizon, the camera's far clip opened up.
+		e.background_color = Color(0.55, 0.72, 0.9)
+		e.fog_depth_begin = 60.0
+		e.fog_depth_end = 400.0
+		main.player.camera.far = 500.0
 		e.fog_density = 0.0012
 		e.fog_light_color = Color(0.6, 0.72, 0.88)
 		e.ambient_light_color = Color(0.72, 0.76, 0.82)
@@ -460,6 +467,10 @@ func _restore_night() -> void:
 		e.ambient_light_energy = _night.ambient_light_energy
 		e.volumetric_fog_density = _night.vfog
 		e.volumetric_fog_albedo = _night.vfog_albedo
+		e.background_color = _night.bg
+		e.fog_depth_begin = _night.fog_begin
+		e.fog_depth_end = _night.fog_end
+		main.player.camera.far = _night.far
 		var sky: ShaderMaterial = e.sky.sky_material as ShaderMaterial if e.sky else null
 		if sky and _night.has("sky"):
 			for k in _night.sky: sky.set_shader_parameter(k, _night.sky[k])

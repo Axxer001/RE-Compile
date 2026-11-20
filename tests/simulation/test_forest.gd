@@ -44,7 +44,7 @@ static func run(check: Callable, c: Node3D) -> void:
 		tree_n[0] = mini(tree_n[0], m.trees.size())
 		tree_n[1] = maxi(tree_n[1], m.trees.size())
 	var per_ms := (Time.get_ticks_usec() - t0) / 1000.0 / SEEDS
-	check.call(bad.is_empty(), "%d seeds (sample) all pass R11's rules (reachable; pages >= 25 m from the start, >= 20 m apart, >= 15 m from zones; nothing within 3 m of a path or in the camp) %s" % [SEEDS, str(bad)])
+	check.call(bad.is_empty(), "%d seeds (sample) all pass R11's rules (pages >= 25 m from the start, >= 20 m apart, >= 15 m from zones; nothing within 3 m of a path or in the camp) %s" % [SEEDS, str(bad)])
 	check.call(tree_n[1] > tree_n[0] + 100 and tree_n[0] > 400, "tree density varies by seed (%d to %d trees)" % [tree_n[0], tree_n[1]])
 	c.new_map(17)
 	var build_ms: float = c.map_ms
@@ -67,7 +67,7 @@ static func run(check: Callable, c: Node3D) -> void:
 		if not c.nav.find_path(c.spawn.at, c.page_spots[id]).ok: unreachable.append(id)
 	for z in c.zones:
 		if not c.nav.find_path(c.spawn.at, z.at).ok: unreachable.append(z.id)
-	check.call(unreachable.is_empty() and c.zones.size() == 6 and c.page_spots.size() == 3, "on the built map, all 3 pages and 6 spawn zones are walkable from the camp %s" % str(unreachable))
+	check.call(unreachable.is_empty() and c.zones.size() == Forest.ZONE_COUNT and c.page_spots.size() == Forest.page_ids().size(), "on the built map, all collectible pages and 24 spawn zones are walkable from the camp %s" % str(unreachable))
 	var tops := []
 	for l in c.map.ledges: tops.append(l[4])
 	check.call(1.0 in tops and 2.0 in tops and 3.0 in tops and c.map.rocks.size() >= 6, "rocks for cover and 1 / 2 / 3 m ledges for mantle tech")
@@ -103,15 +103,17 @@ static func run(check: Callable, c: Node3D) -> void:
 		var rock: MeshInstance3D = c.find_child("kit_ledge_%d" % i, true, false)
 		var lbox: Node3D = c.find_child("ledge_%d" % i, true, false)
 		if rock == null or lbox == null: ledge_bad.append("ledge %d missing" % i); continue
-		var top: float = (rock.global_transform * rock.mesh.get_aabb()).end.y
+		var top: float = (rock.global_transform * rock.mesh.get_aabb()).end.y - c.map.terrain.height_at(Vector2(lg[0],lg[1]))
 		var shown := lbox.find_children("*", "MeshInstance3D", true, false).filter(func(m): return m.visible).size()
 		var col := lbox.find_children("*", "CollisionShape3D", true, false).size()
 		if absf(top - float(lg[4])) > 0.06 or shown > 0 or col == 0: ledge_bad.append("ledge %d top %.2f/%.1f shown %d col %d" % [i, top, lg[4], shown, col])
 	check.call(ledge_bad.is_empty(), "every mantle ledge is a kit rock at its exact height; the box collider stays, unseen %s" % str(ledge_bad))
 	var env0: Environment = (c.find_children("*", "WorldEnvironment", true, false)[0] as WorldEnvironment).environment
-	var sky_ok: bool = env0.background_mode == Environment.BG_SKY and env0.sky and String((env0.sky.sky_material as ShaderMaterial).shader.resource_path).contains("BinbunSky") and float((env0.sky.sky_material as ShaderMaterial).get_shader_parameter("day_night_mix")) < 0.0
+	# Silent Hill 2 night [graphics direction 2026-11-20]: no sky; the background is the fog's exact colour.
+	var AD = load("res://scripts/render/art_direction.gd")
+	var sky_ok: bool = env0.background_mode == Environment.BG_COLOR and env0.sky == null and env0.background_color.is_equal_approx(env0.fog_light_color) and env0.fog_light_color.is_equal_approx(AD.FOG) and env0.fog_mode == Environment.FOG_MODE_DEPTH and is_equal_approx(env0.fog_depth_end, AD.FOG_END) and is_equal_approx(c.player.camera.far, AD.FAR_CLIP) and env0.tonemap_mode == Environment.TONE_MAPPER_LINEAR
 	var floor_m: MeshInstance3D = c.find_child("floor", true, false).find_children("*", "MeshInstance3D", true, false)[0]
-	check.call(sky_ok and floor_m.material_override is ShaderMaterial and String(floor_m.material_override.shader.resource_path).ends_with("ground_lit.gdshader"), "Binbun night sky overhead; the floor wears the grass's ground colour")
+	check.call(sky_ok and floor_m.material_override is ShaderMaterial and String(floor_m.material_override.shader.resource_path).ends_with("ground_lit.gdshader"), "no sky: background = fog colour #1a1f1c, depth fog opaque at 30 m, far clip 40 m, linear tonemap; the floor wears the grass's ground colour")
 
 	# ---- trees: no clipping, no low-poly snap [Sir, 2026-11-13] ------------------------
 	var thin := []
@@ -158,12 +160,12 @@ static func run(check: Callable, c: Node3D) -> void:
 	var env: Environment = (c.find_children("*", "WorldEnvironment", true, false)[0] as WorldEnvironment).environment
 	var moon: DirectionalLight3D = c.find_child("Moon", true, false)
 	check.call(fire != null and fire.light_color.r > fire.light_color.b * 2.0 and not fire.shadow_enabled and fire in c.lamps, "a lit, warm campfire at the camp (no shadow: perf trim 2)")
-	check.call(moon != null and moon.light_color.b > moon.light_color.r and moon.light_energy < 0.5 and env.fog_enabled and env.fog_density >= 0.02 and env.background_color.v < 0.1, "cold moonlight, night sky and fog")
-	check.call(Forest.SIZE == Vector2(150, 150) and Forest.CLEARINGS.size() >= 6 and Forest.PATHS.size() >= Forest.CLEARINGS.size() - 1, "150 x 150 m: %d clearings joined by %d paths" % [Forest.CLEARINGS.size(), Forest.PATHS.size()])
+	check.call(moon != null and moon.light_color.b > moon.light_color.r and moon.light_energy < 0.5 and env.fog_enabled and env.fog_density >= 0.02 and env.background_color.v < 0.15, "cool moonlight under a dark fogged night")
+	check.call(Forest.SIZE == Vector2(250, 250) and Forest.CLEARINGS.size() >= 6 and Forest.PATHS.is_empty(), "250 x 250 m: %d clearings and %d paths" % [Forest.CLEARINGS.size(), Forest.PATHS.size()])
 	check.call(flat(c.spawn.at).distance_to(flat(Forest.CAMPFIRE)) < 8.0 and Forest.clearing_at(c.spawn.at) == 0 and p.global_position.distance_to(c.spawn.at) < 0.05, "the player starts at the camp")
 	# Trees block sight (aggro and blast line of sight use the same layer).
 	var t: Array = c.map.trees[c.map.trees.size() / 2]
-	var tp := Vector3(t[0], 1.6, t[1])
+	var tp := Vector3(t[0], c.map.terrain.height_at(Vector2(t[0],t[1])) + 1.6, t[1])
 	check.call(not c.clear_line(tp + Vector3(-3, 0, 0), tp + Vector3(3, 0, 0)) and c.clear_line(c.spawn.at + Vector3(0, 1.6, 0), c.spawn.at + Vector3(0, 1.6, -8)), "a trunk blocks sight; the open camp does not")
 	# A quiet start: six Sprites roam their zones, nobody is in combat.
 	for i in 120: s.step(DT)
@@ -186,7 +188,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	c.park_enemies()
 	var seed_alive: int = c.map_seed
 	p.global_position = Vector3(75, 0, 95)
-	p.health.apply(DamagePacket.new(96001, "test", "infected", 500.0, "bite"), s.run.time)
+	p.health.apply(DamagePacket.new(96001, "test", "infected", 5000.0, "bite"), s.run.time)
 	check.call(p.health.dead and c.death_panel.visible and c.death_panel.button.text == "Return to camp", "death: the panel offers 'Return to camp'")
 	c.death_panel.button.pressed.emit()
 	await tree.physics_frame

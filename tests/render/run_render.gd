@@ -95,9 +95,7 @@ func _esc_event() -> InputEventKey:
 	return e
 
 func run(c: Node3D) -> void:
-	var colour16_on: bool = c.art.post.get_shader_parameter("colour16")
 	c.art.set_grain(0.0) # deterministic captures (grain is checked on its own below)
-	c.art.set_colour16(false) # comparisons at full colour depth: 16-bit merges the darkest night tones (checked on its own below)
 	var env_r: Environment = (c.find_children("*", "WorldEnvironment", true, false)[0] as WorldEnvironment).environment
 	if env_r.sky and env_r.sky.sky_material is ShaderMaterial: (env_r.sky.sky_material as ShaderMaterial).set_shader_parameter("wind_speed", Vector2.ZERO) # still clouds: deterministic captures
 	await frame()
@@ -124,6 +122,7 @@ func run(c: Node3D) -> void:
 	c.art.set_grain(0.0)
 	var flames: Node3D = c.find_child("CampFlames", true, false)
 	if flames: flames.visible = false # its flames animate every frame; the stills test the screen pipeline
+	c.pcombat.rig.visible = false # and the held book and wand move
 	var still_fire: OmniLight3D = c.find_child("CampFire", true, false)
 	var flick: Variant = still_fire.get_meta("flicker", false) if still_fire else false
 	if still_fire: still_fire.set_meta("flicker", false) # and its light flickers (the fire stones show it)
@@ -132,10 +131,11 @@ func run(c: Node3D) -> void:
 	await frame()
 	var still2 := shot("fp-still-2.png")
 	if flames: flames.visible = true
+	c.pcombat.rig.visible = true
 	if still_fire: still_fire.set_meta("flicker", flick)
 	check(changed_pixels(still1, still2) == 0, "grain off: an unchanged view captures identically (%d changed)" % changed_pixels(still1, still2))
 	check(stats.max - stats.min > 0.15, "first-person view has real contrast (%.2f..%.2f)" % [stats.min, stats.max])
-	# Cultivate from the first person: a soft cyan aura by the hands, never a screen-filling flash.
+	# Cultivate from the first person: a soft cyan aura by the wand, never a screen-filling flash.
 	place(c, Vector3(75, 0, 55), 0.0)
 	c.pcombat.cultivate_until = -INF
 	await frame()
@@ -159,6 +159,7 @@ func run(c: Node3D) -> void:
 	place(c, Vector3(75, 0, 55), 0.0)
 	await frame()
 	var calm := shot("fp-spell-calm.png")
+	for id in ["dragons_breath", "firefly", "explosion"]: c.session.meta.unlock(id) # Render fixture grants.
 	pcs.equip("spell_1", c.session.grimoire.page("dragons_breath"))
 	pcs.equip("spell_2", c.session.grimoire.page("firefly"))
 	pcs.equip("spell_3", c.session.grimoire.page("explosion"))
@@ -365,29 +366,128 @@ func run(c: Node3D) -> void:
 	var no_page := shot("fp-page-hidden.png")
 	pg_node.visible = true
 	check(distinct(page_shot, no_page), "a lost page (the scroll) is visible on the forest floor")
-	# Phase 3: the Binbun night sky, looking up from the camp.
-	place(c, c.spawn.at, 0.0, 55.0)
+	# The Silent Hill 2 night [graphics direction 2026-11-20]: no sky; looking up shows
+	# only the fog's colour (no void, no band, no stars).
+	place(c, c.spawn.at, 0.0, 80.0)
+	c.pcombat.rig.visible = false # the held book's parchment is not the sky
 	await frame()
 	var sky_shot := shot("fp-sky.png")
+	c.pcombat.rig.visible = true
+	var lo_l := 1.0
+	var hi_l := 0.0
 	var bright := 0
-	for y in range(sky_shot.get_height() / 9, sky_shot.get_height() / 2, 4): # the sky, below the HUD bars
-		for x in range(sky_shot.get_width() / 6, sky_shot.get_width() * 5 / 6, 4):
-			if sky_shot.get_pixel(x, y).get_luminance() > 0.5: bright += 1
-	check(bright < 10, "no stars in the night sky (%d bright points)" % bright)
-	check(luma(sky_shot, 0.6) > 0.005 and luma(sky_shot, 0.6) < 0.25, "the night sky overhead is dark but not black (luma %.3f)" % luma(sky_shot, 0.6))
-	# Pixel look [Sir, 2026-11-13]: the world view at 1/3 resolution, nearest-neighbour
-	# up, 16-bit colour dithered on its grid; the post layer grades the world below the HUD.
+	for y in range(sky_shot.get_height() / 9, sky_shot.get_height() / 2, 4): # overhead, below the HUD bars
+		for x in range(sky_shot.get_width() / 3, sky_shot.get_width() * 2 / 3, 4):
+			var lm: float = sky_shot.get_pixel(x, y).get_luminance()
+			lo_l = minf(lo_l, lm)
+			hi_l = maxf(hi_l, lm)
+			if lm > 0.5: bright += 1
+	check(bright == 0 and hi_l - lo_l < 0.06 and luma(sky_shot, 0.3) > 0.03 and luma(sky_shot, 0.3) < 0.2, "overhead: one flat fog colour, no stars or void (luma %.3f, spread %.3f)" % [luma(sky_shot, 0.3), hi_l - lo_l])
+	# Fog and background are one colour: a wall at 35 m (past the 30 m fog end, inside the 40 m far clip) vanishes.
+	place(c, c.spawn.at, 0.0, 0.0)
+	var flames_f: Node3D = c.find_child("CampFlames", true, false)
+	if flames_f: flames_f.visible = false # the flames and the book's live ink animate between shots
+	c.pcombat.rig.visible = false
+	await frame()
+	var no_wall := shot("fp-fog-open.png")
+	await frame()
+	var still_base: int = changed_pixels(no_wall, shot("fp-fog-open-2.png")) # the grass sways between frames
+	var wall := MeshInstance3D.new()
+	var wm := BoxMesh.new()
+	wm.size = Vector3(60, 30, 1)
+	wall.mesh = wm
+	var wmat := StandardMaterial3D.new()
+	wmat.albedo_color = Color(0.9, 0.85, 0.7)
+	wall.material_override = wmat
+	wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF # its shadow on the near ground is not what is measured
+	c.add_child(wall)
+	wall.global_position = c.player.camera.global_position + (-c.player.camera.global_transform.basis.z) * 35.0
+	await frame()
+	var with_wall := shot("fp-fog-wall.png")
+	wall.global_position = c.player.camera.global_position + (-c.player.camera.global_transform.basis.z) * 12.0
+	await frame()
+	var near_wall := shot("fp-fog-wall-near.png")
+	wall.queue_free()
+	if flames_f: flames_f.visible = true
+	c.pcombat.rig.visible = true
+	check(changed_pixels(no_wall, with_wall) <= still_base + changed_pixels(no_wall, near_wall) / 16 and changed_pixels(no_wall, near_wall) > still_base + 40, "the fog is opaque by 30 m and matches the background: a wall at 35 m changes no more than two still frames do (%d vs %d), at 12 m it shows (%d)" % [changed_pixels(no_wall, with_wall), still_base, changed_pixels(no_wall, near_wall)])
+	check(is_equal_approx(c.player.camera.far, c.ArtDirection.FAR_CLIP) and env_r.background_color.is_equal_approx(env_r.fog_light_color) and env_r.sky == null and env_r.tonemap_mode == Environment.TONE_MAPPER_LINEAR, "far clip 40 m, background = fog colour, no sky, linear tonemap")
+	# Native resolution: the pixel view and the 16-bit dither are gone; grain, desaturation, vignette stay.
 	var lo: CanvasLayer = c.lofi
 	var full := Vector2i(get_viewport().get_visible_rect().size)
-	var grid: Vector2 = c.art.post.get_shader_parameter("low_res")
-	check(lo.viewport.size == full / c.LOFI_SHRINK and lo.container.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST and grid == Vector2(lo.viewport.size) and colour16_on and not lo.grain.visible, "pixel look: world view %s of %s, nearest filter, 16-bit dither on its grid; old grain layer off" % [lo.viewport.size, full])
-	c.art.set_colour16(true)
+	check(lo.viewport.size == full and not c.art.post.shader.code.contains("colour16") and not c.art.post.shader.code.contains("low_res") and c.art.post.shader.code.contains("uniform float saturation = 0.7") and not lo.grain.visible, "the world renders at native resolution %s; post = grain, 30%% desaturation, vignette" % lo.viewport.size)
+	# The forest near, mid and far: tropical trees, faceted and nearest-filtered, fading into the fog.
+	var kit_t: Node = c.find_child("KitTrees", true, false)
+	var kinds := {}
+	if kit_t:
+		for g in kit_t.find_children("*", "MultiMeshInstance3D", true, false):
+			kinds[String(g.name).get_slice("@", 0)] = true
+	check(kinds.has("Narra") and kinds.has("Mango") and kinds.has("Banana") and kinds.has("Bamboo") and not kinds.has("Pine_5") and not kinds.has("DeadTree_1"), "the forest is Narra, Mango, Banana and Bamboo (no pines) %s" % str(kinds.keys()))
+	var tr0: Array = c.map.trees[0]
+	var tree_at := Vector3(tr0[0], c.map.terrain.height_at(Vector2(tr0[0], tr0[1])), tr0[1])
+	var lums := []
+	for dist in [4.0, 14.0, 26.0]:
+		var stand := tree_at + Vector3(0, 0, dist)
+		stand.y = c.map.terrain.height_at(Vector2(stand.x, stand.z))
+		place(c, stand, 0.0, 8.0)
+		c.pcombat.rig.visible = false
+		await frame()
+		var img := shot("fp-forest-%s.png" % ("near" if dist < 5.0 else ("mid" if dist < 20.0 else "far")))
+		c.pcombat.rig.visible = true
+		lums.append(luma(img, 0.4))
+	check(lums.size() == 3 and lums[0] != lums[2], "the forest near / mid / far, the trees fading into the fog (luma %s)" % str(lums))
+	# Enemies in the fog: their eyes glow.
+	var fog_foe: CharacterBody3D = c.enemies.values().filter(func(e): return e.kind == "sprite")[0]
+	var eyes: Array = [] # the glowing eyes: EyeL and EyeR on the head bone
+	for att in fog_foe.find_children("*", "BoneAttachment3D", true, false):
+		for ch in att.get_children():
+			if ch is MeshInstance3D and String(ch.name) in ["EyeL", "EyeR"]: eyes.append(ch)
+	c.park_enemies([fog_foe.enemy_id])
+	place(c, c.spawn.at, 0.0, 0.0)
+	var foe_at: Vector3 = c.player.global_position + Vector3(0, 0, -14.0)
+	foe_at.y = c.map.terrain.height_at(Vector2(foe_at.x, foe_at.z)) # on the ground, not under the hill
+	fog_foe.reset_to(foe_at, 180.0)
+	fog_foe.inert = true
+	fog_foe.visible = true
+	fog_foe.set_dormant(true) # its clip paused: only the eyes may change between the two shots
+	c.pcombat.rig.visible = false
+	for i in 4: await frame()
+	var foe_fog := shot("fp-enemy-fog.png")
+	for e in eyes: e.visible = false
 	await frame()
-	var c16a := shot("fp-colour16.png")
-	c.art.set_colour16(false)
+	var foe_dark := shot("fp-enemy-fog-noeyes.png")
+	for e in eyes: e.visible = true
+	c.pcombat.rig.visible = true
+	var cam_e: Camera3D = c.player.camera
+	var vp_size: Vector2 = get_viewport().get_visible_rect().size
+	var eye_px := func(img: Image) -> int: # the brightest yellow-green light round where the eyes project
+		var k := Vector2(img.get_width(), img.get_height()) / vp_size
+		var best := 0
+		for e in eyes:
+			var em_i := e as MeshInstance3D
+			var sp2: Vector2 = cam_e.unproject_position(em_i.global_transform * em_i.get_aabb().get_center()) * k
+			for y in range(int(sp2.y) - 6, int(sp2.y) + 7):
+				for x in range(int(sp2.x) - 6, int(sp2.x) + 7):
+					if x < 0 or y < 0 or x >= img.get_width() or y >= img.get_height(): continue
+					var px: Color = img.get_pixel(x, y)
+					best = maxi(best, int(px.g * 255.0) if px.g > px.b * 1.2 else 0)
+		return best
+	check(eyes.size() == 2 and eye_px.call(foe_fog) > eye_px.call(foe_dark) + 20, "a Sprite 14 m out in the fog: its two glowing eyes show (%d eyes, brightest green %d, %d without)" % [eyes.size(), eye_px.call(foe_fog), eye_px.call(foe_dark)])
+	# The wand light: a warm ~15 m cone ahead and a soft glow at the tip.
+	var lamp: SpotLight3D = c.pcombat.wand.lamp
+	place(c, tree_at + Vector3(0, 0, 6.0), 0.0, 0.0)
 	await frame()
-	var c24 := shot("fp-colour24.png")
-	check(exact_diff(c16a, c24) > exact_diff(c24, c24) + 1000, "16-bit colour on: the frame differs from full depth in %d samples" % exact_diff(c16a, c24))
+	var lamp_on := shot("fp-wand-light.png")
+	lamp.visible = false
+	c.pcombat.wand.glow.visible = false
+	await frame()
+	var lamp_off := shot("fp-wand-light-off.png")
+	lamp.visible = true
+	c.pcombat.wand.glow.visible = true
+	check(lamp != null and is_equal_approx(lamp.spot_range, 15.0) and lamp.light_color.r > lamp.light_color.b and luma(lamp_on, 0.5) > luma(lamp_off, 0.5) + 0.004, "the wand light: a warm 15 m cone and tip glow light the trees ahead (%.3f lit, %.3f off)" % [luma(lamp_on, 0.5), luma(lamp_off, 0.5)])
+	c.park_enemies()
+	place(c, c.spawn.at, 0.0, 0.0)
+	await frame()
 	check(lo.camera.global_transform.is_equal_approx(c.player.camera.global_transform) and get_viewport().disable_3d, "view camera mirrors the player camera; root 3D off")
 	var art_layers: Array = c.art.find_children("*", "CanvasLayer", true, false).map(func(l): return l.layer)
 	check(art_layers.size() == 1 and art_layers[0] > lo.layer and art_layers[0] < c.hud.layer and c.hud.layer < c.grimoire_panel.layer, "post layer %s sits above the world (%d) and below the HUD (%d) and panels" % [art_layers, lo.layer, c.hud.layer])
@@ -441,7 +541,8 @@ func run(c: Node3D) -> void:
 	var p2 := sk.get_bone_pose_position(bone)
 	check(bone >= 0 and not p1.is_equal_approx(p2), "Quaternius walk clip drives the body skeleton")
 	var skin: BaseMaterial3D = OutfitBuilderRef.body_mesh(sh.model).get_surface_override_material(0)
-	check(skin != null and skin.albedo_color.is_equal_approx(sh.SKIN_TINT) and skin.emission_enabled, "the Sprite wears its blighted violet skin")
+	var Look = load("res://scripts/render/look.gd")
+	check(skin != null and skin.albedo_color.is_equal_approx(Look.palette_tint(sh.SKIN_TINT, 0.3)) and skin.emission_enabled and is_equal_approx(skin.roughness, 1.0), "the Sprite wears its blighted violet skin, muted toward the earthy palette, matte")
 	await frame()
 	shot("fp-sprite-run.png")
 	c.session.restart()
@@ -493,9 +594,7 @@ func run(c: Node3D) -> void:
 	var with_hud := shot("fp-hud.png")
 	var screen := get_viewport().get_visible_rect().size
 	var bar_r := Rect2(c.hud.hp_bar.back.global_position, c.hud.hp_bar.back.size)
-	var ab: Control = c.hud.find_child("ActionBar", true, false)
-	var ab_r := Rect2(ab.global_position, ab.size)
-	check(changed_pixels(no_hud, with_hud) >= 10 and Rect2(Vector2.ZERO, screen).encloses(bar_r) and Rect2(Vector2.ZERO, screen).encloses(ab_r) and ab_r.position.y > screen.y * 0.75, "the HUD draws on screen: bars top-left %s, action bar bottom-centre %s" % [bar_r, ab_r])
+	check(changed_pixels(no_hud, with_hud) >= 10 and Rect2(Vector2.ZERO, screen).encloses(bar_r) and c.hud.find_child("ActionBar", true, false) == null, "the HUD draws on screen: bars top-left %s; no loadout bar [2026-11-20]" % bar_r)
 	c.player.health.reset()
 	c.show_death_panel()
 	await frame()
@@ -555,50 +654,156 @@ func run(c: Node3D) -> void:
 	var ring_shot := shot("fp-ring-of-fire.png")
 	check(distinct(clear_view, ring_shot) and luma(ring_shot) > luma(clear_view) + 0.005, "Ring of Fire orbs are drawn round the player (%.3f -> %.3f)" % [luma(clear_view), luma(ring_shot)])
 	c.projectiles.reset()
-	# The full first-person body: looking down shows it; hidden, the same view differs.
-	var body: Node3D = c.player.get_node_or_null("Body")
+	# The held grimoire [Sir, 2026-11-20]: the book in the right hand and the Ember
+	# Wand in the left (default), mirrored by Settings; page 5 is the status page.
+	var rig: Node3D = c.pcombat.rig
+	c.session.settings.set_value("book_hand", "right")
+	c.session.restart() # no Ring of Fire or other spell left in view
+	c.park_enemies()
+	c.art.set_grain(0.0)
+	place(c, Vector3(75, 0, 55), 0.0, 0.0)
+	for i in 50: await frame() # the equip lift (0.72 s) settles
+	var with_rig := shot("fp-held-right.png")
+	rig.visible = false
+	await frame()
+	var no_rig := shot("fp-held-hidden.png")
+	rig.visible = true
+	var halves := func(a: Image, b: Image) -> Vector2i: # changed samples in the left and right halves of the lower view
+		var out := Vector2i.ZERO
+		for y in range(a.get_height() / 3, a.get_height(), 3):
+			for x in range(0, a.get_width(), 3):
+				if absf(a.get_pixel(x, y).get_luminance() - b.get_pixel(x, y).get_luminance()) < 0.08: continue
+				if x < a.get_width() / 2: out.x += 1
+				else: out.y += 1
+		return out
+	var rh: Vector2i = halves.call(with_rig, no_rig)
+	var book_px := 0
+	for y in range(with_rig.get_height() / 3, with_rig.get_height(), 3):
+		for x in range(with_rig.get_width() / 2, with_rig.get_width(), 3):
+			var px: Color = with_rig.get_pixel(x, y)
+			if px.r > 0.55 and px.g > 0.45 and px.b > 0.3 and px.r > px.b: book_px += 1 # the parchment
+	check(rh.x > 30 and rh.y > 30 and book_px > 40 and rig.book.position.x > 0.0 and rig.wand.position.x < 0.0, "the held book is drawn on the right (%d parchment samples), the wand on the left (%d / %d changed samples left / right)" % [book_px, rh.x, rh.y])
+	c.session.settings.set_value("book_hand", "left")
+	for i in 3: await frame()
+	var with_left := shot("fp-held-left.png")
+	var left_book := 0
+	for y in range(with_left.get_height() / 3, with_left.get_height(), 3):
+		for x in range(0, with_left.get_width() / 2, 3):
+			var px: Color = with_left.get_pixel(x, y)
+			if px.r > 0.55 and px.g > 0.45 and px.b > 0.3 and px.r > px.b: left_book += 1
+	check(left_book > 40 and rig.book.position.x < 0.0 and distinct(with_rig, with_left), "Settings mirrors the pair: the book on the left (%d parchment samples)" % left_book)
+	c.session.settings.set_value("book_hand", "right")
+	c.pcombat.turn_to_page(c.pcombat.STATUS_PAGE, c.session.run.time)
+	c.session.run.time += c.pcombat.TURN_S * c.pcombat.flips() + 0.01
+	c.pcombat.simulate({}, 0.0, c.session.run.time)
+	for i in 4: await frame()
+	var status_shot := shot("fp-held-status.png")
+	check(c.pcombat.active == c.pcombat.STATUS_PAGE and rig.shown == c.pcombat.STATUS_PAGE and distinct(with_rig, status_shot), "key 5: the book shows the status page")
+	c.pcombat.reset()
+	for i in 3: await frame()
+	c.pcombat.turn_to_page(1, c.session.run.time) # page 1 -> 2: one flip (the leaf over PageFlip1)
+	c.session.run.time += c.pcombat.TURN_S * 0.4
+	for i in 3: await frame()
+	var turn_shot := shot("fp-held-turn.png")
+	check(rig.openness == 1.0 and rig.leaf.visible and distinct(with_rig, turn_shot), "mid-turn: the leaf is drawn while the covers remain open")
+	c.session.run.time += c.pcombat.TURN_S
+	c.pcombat.simulate({}, 0.0, c.session.run.time)
+	c.pcombat.reset()
+	c.pcombat.cast_basic(c.session.run.time)
+	await frame()
+	shot("fp-held-cast.png")
+	check(rig.wand.glowing(), "a cast lights the wand's tip")
+	c.projectiles.reset()
 	place(c, Vector3(75, 0, 55), 0.0, -75.0)
 	await frame()
-	var with_body := shot("fp-body-down.png")
-	if body: body.visible = false
-	await frame()
-	var no_body := shot("fp-body-hidden.png")
-	if body: body.visible = true
-	check(body != null and distinct(with_body, no_body), "looking down shows the player's own body")
+	shot("fp-look-down.png")
+	check(c.player.get_node_or_null("Body") == null and (rig.wand.find_children("*", "GeometryInstance3D", true, false) + rig.book.find_children("*", "GeometryInstance3D", true, false)).all(func(m): return (m as GeometryInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF), "no player body; the book and wand cast no shadow")
 	c.player.pitch = 0.0
 	c.player.apply_look()
-	# P5: the Grimoire overlay (Tab), browse and Code Assembly views, centred and on screen.
+	# P5: the Grimoire's View mode [Sir, 2026-11-20]: the held book opened, centred,
+	# on the contents; ability pages with their lesson; a jump mid-flip; the lean
+	# toward the cursor; the idle inspection's front cover; the Code Assembly.
 	c.session.grimoire.find("quick_step")
 	c.session.handle_action("grimoire")
-	await frame()
-	await frame()
-	shot("fp-grimoire-contents.png")
+	var vw: Node = c.grimoire_panel.view
+	# Tab [Sir, 2026-11-20]: the held book tucks away, then the View's rises closed
+	# from the bottom middle and opens.
+	for i in int((vw.TUCK_WAIT_S + vw.RISE_S * 0.3) * 60.0):
+		rig.step(1.0 / 60.0)
+		vw.step(1.0 / 60.0)
+	for i in 2: await frame()
+	shot("fp-grimoire-rise.png")
+	check(vw.mode == "equip" and vw.openness < 0.05 and rig.reveal <= 0.0, "Tab: the held book is tucked away and the View's rises closed (openness %.2f)" % vw.openness)
+	for i in int(vw.OPEN_TOTAL_S * 60.0): vw.step(1.0 / 60.0)
+	for i in 3: await frame()
+	var vshot := shot("fp-grimoire-contents.png")
+	var scr := Vector2(get_viewport().get_visible_rect().size)
+	var parchment := func(img: Image, rect: Rect2i) -> int: # parchment-coloured samples in a screen box
+		var n := 0
+		for y in range(rect.position.y, rect.end.y, 6):
+			for x in range(rect.position.x, rect.end.x, 6):
+				var px: Color = img.get_pixel(clampi(x, 0, img.get_width() - 1), clampi(y, 0, img.get_height() - 1))
+				if px.r > 0.6 and px.g > 0.5 and px.b > 0.35 and px.r > px.b + 0.1: n += 1
+		return n
+	var k := Vector2(vshot.get_width(), vshot.get_height()) / scr
+	var book_box := Rect2i(Vector2i(scr * Vector2(0.3, 0.25) * k), Vector2i(scr * Vector2(0.4, 0.5) * k))
+	check(vw.mode == "view" and c.grimoire_panel.selected == "" and parchment.call(vshot, book_box) > 200 and vw.right_vp.find_child("Contents", true, false) != null, "View mode: the open book, centred, on the Table of Contents (%d parchment samples)" % parchment.call(vshot, book_box))
+	check(distinct(clear_view, vshot) and vw.blur_amount > 0.99, "the world behind is blurred and darkened")
+	var book_r: Rect2 = vw.book_screen_rect()
+	var title_r: Rect2 = c.grimoire_panel.view_rect("ViewTitle")
+	var close_r: Rect2 = c.grimoire_panel.view_rect("Close")
+	check(title_r.size.y > 0.0 and close_r.size.y > 0.0 and title_r.end.y <= book_r.position.y and close_r.position.y >= book_r.end.y and close_r.end.y <= scr.y, "the panel's title sits above the open book and Close below it, both on screen (title to %.0f, book %.0f-%.0f, Close %.0f-%.0f of %.0f)" % [title_r.end.y, book_r.position.y, book_r.end.y, close_r.position.y, close_r.end.y, scr.y])
 	c.grimoire_panel.select_page("scorch_and_burn")
-	await frame()
-	await frame()
+	for i in 3: await frame()
 	var gshot := shot("fp-grimoire.png")
 	for lp in ["dragons_breath", "quick_step"]: # the lesson and its breakdown, scrolled into view
 		c.grimoire_panel.select_page(lp)
-		await frame()
-		await frame()
-		var pb: ScrollContainer = c.grimoire_panel.panel.find_child("PageBody", true, false)
+		for i in 2: await frame()
+		var pb: ScrollContainer = c.grimoire_panel.page_control("PageBody")
 		if pb: pb.scroll_vertical = int(pb.get_v_scroll_bar().max_value)
-		await frame()
+		for i in 2: await frame()
 		shot("fp-lesson-%s.png" % lp)
+	c.grimoire_panel.show_contents()
+	vw.step(0.1)
+	c.grimoire_panel._jump_to("quick_step")
+	vw.step(0.45)
+	for i in 2: await frame()
+	var jshot := shot("fp-grimoire-jump.png")
+	check(vw.leaf.visible and distinct(gshot, jshot), "a contents jump draws its turning leaves")
+	vw.step(1.0)
+	vw.cursor_override = scr * Vector2(0.95, 0.15)
+	for i in 90: vw.step(1.0 / 60.0)
+	for i in 2: await frame()
+	var lean_shot := shot("fp-grimoire-lean.png")
+	vw.cursor_override = scr * 0.5 # the cursor at the centre: level
+	for i in 120: vw.step(1.0 / 60.0)
+	for i in 2: await frame()
+	var level_shot := shot("fp-grimoire-level.png")
+	vw.cursor_override = Vector2(-1, -1)
+	check(distinct(lean_shot, level_shot), "the book leans toward the cursor (top right)")
+	vw.idle = vw.IDLE_AFTER_S
+	vw.step(1.0 / 60.0)
+	for i in int((vw.IN_CLOSE + vw.IN_FRONT) * 60.0): vw.step(1.0 / 60.0)
+	for i in 2: await frame()
+	var cover := shot("fp-grimoire-idle-cover.png")
+	check(vw.mode == "inspect" and vw.openness < 0.05 and distinct(gshot, cover), "the idle inspection shows the closed book's front cover")
+	vw.interrupt()
+	vw.step(1.0)
 	c.grimoire_panel.select_page("scorch_and_burn")
-	await frame()
-	await frame()
-	var gpn: Control = c.grimoire_panel.panel
-	var scr := Vector2(get_viewport().get_visible_rect().size)
-	var grect := Rect2(gpn.position, gpn.size)
-	check(c.grimoire_panel.visible and distinct(clear_view, gshot) and Rect2(Vector2.ZERO, scr).encloses(grect), "the Grimoire draws on screen (%s in %s)" % [grect, scr])
 	c.grimoire_panel.start_assembly("quick_step")
-	await frame()
-	await frame()
+	for i in 3: await frame()
 	var ashot := shot("fp-code-assembly.png")
-	grect = Rect2(gpn.position, gpn.size)
-	check(distinct(gshot, ashot) and Rect2(Vector2.ZERO, scr).encloses(grect), "the Code Assembly view draws on screen (%s)" % grect)
+	check(distinct(gshot, ashot) and vw.right_vp.find_child("line_0", true, false) != null, "the Code Assembly draws on the page")
+	var gpn: Control = c.grimoire_panel.panel
+	var grect := Rect2(gpn.position, gpn.size)
 	c.grimoire_panel.show_tab("player_id")
+	var stg: Node3D = c.grimoire_panel.stage
+	for i in int(vw.UNEQUIP_S * 60.0) + 2: vw.step(1.0 / 60.0)
+	for i in int(stg.CARD_IN_S * 30.0): stg._process(1.0 / 60.0)
+	await frame()
+	await frame()
+	shot("fp-player-id-rise.png") # the card halfway up, flipping up
+	for i in int(stg.CARD_IN_S * 30.0) + 2: stg._process(1.0 / 60.0)
 	await frame()
 	await frame()
 	var id_front := shot("fp-player-id.png")
@@ -609,6 +814,33 @@ func run(c: Node3D) -> void:
 	var cf: Control = c.grimoire_panel.panel.find_child("CardFace", true, false)
 	check(cf != null and distinct(id_front, id_back) and Rect2(Vector2.ZERO, scr).encloses(Rect2(cf.global_position, cf.size)) and c.grimoire_panel.panel.find_child("StatTable", true, false) != null, "the Player ID card flips: front (portrait, records) and back (the stats table), on screen")
 	c.grimoire_panel.flip_card()
+	# Player ID -> Grimoire: the card goes down showing itself, not the ink's
+	# Grimoire tab (the black card [Sir, 2026-11-20]).
+	await frame()
+	await frame()
+	var card_r: Rect2 = stg.regions.get("IDFront", Rect2())
+	var luma_of := func(tex: Texture2D) -> float:
+		var im: Image = tex.get_image()
+		var sum := 0.0
+		var n := 0
+		for y in range(int(card_r.position.y), int(card_r.end.y), 8):
+			for x in range(int(card_r.position.x), int(card_r.end.x), 8):
+				sum += im.get_pixel(clampi(x, 0, im.get_width() - 1), clampi(y, 0, im.get_height() - 1)).get_luminance()
+				n += 1
+		return sum / maxf(n, 1)
+	var card_luma: float = luma_of.call(stg.ink.get_texture())
+	c.grimoire_panel.show_tab("grimoire")
+	for i in 3: await frame()
+	shot("fp-player-id-going.png") # on its way down: still the card, not black
+	var going: float = luma_of.call(stg.prints["IDFront"].albedo_texture)
+	var ink_now: float = luma_of.call(stg.ink.get_texture())
+	check(card_r.size.x > 0.0 and absf(going - card_luma) < 0.02 and stg.card_in > 0.0, "Player ID -> Grimoire: the card goes down with its own face (luma %.3f, as shown %.3f; the ink now draws the Grimoire at %.3f)" % [going, card_luma, ink_now])
+	for i in int(stg.CARD_IN_S * 60.0) + 2: stg._process(1.0 / 60.0)
+	for i in int(vw.EQUIP_S * 60.0) + 2: vw.step(1.0 / 60.0)
+	check(vw.mode == "view" and stg.card_gone(), "then the book comes up and opens")
+	c.grimoire_panel.show_tab("player_id")
+	for i in int(vw.UNEQUIP_S * 60.0) + 2: vw.step(1.0 / 60.0)
+	for i in int(stg.CARD_IN_S * 60.0) + 2: stg._process(1.0 / 60.0)
 	c.session.stats.unspent = 0
 	c.grimoire_panel.start_chant("magic_pow")
 	await frame()
@@ -621,8 +853,8 @@ func run(c: Node3D) -> void:
 	c.session.restart()
 
 	# The Effects list on T, with a buff on: its icon sits in a 48 px tile.
-	c.pcombat.ready_at.erase("skill_1")
-	c.pcombat.use_slot("skill_1", Vector2.ZERO, c.session.run.time)
+	c.pcombat.ready_at.erase("spell_2")
+	c.pcombat.use_slot("spell_2", Vector2.ZERO, c.session.run.time)
 	c.session.handle_action("effects_tab")
 	c.publish(0.0)
 	await frame()
@@ -632,6 +864,40 @@ func run(c: Node3D) -> void:
 	check(tile != null and tile.size.x <= 52.0 and tile.size.y <= 52.0, "the T panel's icon draws at its 48 px tile (%s)" % (str(tile.size) if tile else "none"))
 	c.session.handle_action("effects_tab")
 	c.session.restart()
+
+	# The Dark Forest roster [docs/plan-dark-forest-roster.md]: a Forest Ghoul with
+	# its bow, Kostas Mortus with its void aura, and both kinds of arrow in flight.
+	var ghouls: Array = c.enemies.values().filter(func(e): return e.kind == "ghoul")
+	var morti: Array = c.enemies.values().filter(func(e): return e.kind == "mortus")
+	check(not ghouls.is_empty() and not morti.is_empty(), "the forest has Forest Ghouls (%d) and Kostas Mortus (%d)" % [ghouls.size(), morti.size()])
+	if not ghouls.is_empty() and not morti.is_empty():
+		c.park_enemies([ghouls[0].enemy_id, morti[0].enemy_id])
+		var rs_at := Vector3(75, 0, 72)
+		place(c, rs_at, 0.0, -4.0)
+		ghouls[0].visible = false
+		morti[0].visible = false
+		await frame()
+		var roster_none := shot("fp-roster-none.png")
+		ghouls[0].reset_to(rs_at + Vector3(-2.5, 0, -8), 180.0)
+		morti[0].reset_to(rs_at + Vector3(3.0, 0, -10), 180.0)
+		for f in [ghouls[0], morti[0]]:
+			f.inert = true
+			f.visible = true
+		for i in 6: await frame()
+		var roster_shot := shot("fp-roster-ghoul-mortus.png")
+		var bow: Node = ghouls[0].find_child("Bow", true, false)
+		check(bow != null and exact_diff(roster_none, roster_shot) > roster_shot.get_width() * roster_shot.get_height() / 20000, "a Forest Ghoul (bow in hand) and Kostas Mortus are drawn (%d px changed)" % exact_diff(roster_none, roster_shot))
+		ghouls[0].visible = false
+		morti[0].visible = false
+		var eye_r: Vector3 = c.player.camera.global_position
+		var fwd_r: Vector3 = -c.player.camera.global_transform.basis.z
+		var plain_a: Dictionary = c.arrows.fire(eye_r + fwd_r * 4.0 + Vector3(-0.6, -0.2, 0), eye_r + fwd_r * 4.0 + Vector3(0.6, -0.2, 0), 70.0, false, "render", c.session.run.time)
+		var burst_a: Dictionary = c.arrows.fire(eye_r + fwd_r * 5.0 + Vector3(0.6, 0.3, 0), eye_r + fwd_r * 5.0 + Vector3(-0.6, 0.3, 0), 35.0, true, "render", c.session.run.time)
+		for i in 4: await frame()
+		var arrows_shot := shot("fp-ghoul-arrows.png")
+		check(plain_a.node != null and burst_a.node != null and not plain_a.node.has_node("Trail") and not burst_a.node.has_node("Trail") and exact_diff(roster_none, arrows_shot) > 60, "the Ghoul's arrow and the green-headed Burst arrow are drawn in flight, no trails [15b] (%d px changed)" % exact_diff(roster_none, arrows_shot))
+		c.arrows.reset()
+		c.session.restart()
 
 	# The Sprites are posed at level start (never a T-pose).
 	check(c.enemies.values().all(func(e): return e.anim.is_playing()), "every Sprite starts the level posed by an animation")

@@ -1,7 +1,7 @@
 extends RefCounted
 # Sir's R13 (handoff §10), on the arena's 2 m ledge (x 90-94, z 37-43, south
 # face at z 43): a ledge hang lasts until input; W climbs, A/D shimmy and stop
-# at the ledge's end (the hands follow), S does nothing; jump is the mantle
+# at the ledge's end, S does nothing; jump is the mantle
 # hop; Shift superglides at 15 m/s (+2 up) toward the held direction, forward
 # with none, with no dash charge spent, no cooldown and no i-frames.
 
@@ -66,18 +66,17 @@ static func run(check: Callable, c: Node3D) -> void:
 	keys.erase(KEY_W)
 	check.call(p.state != p.Move.MANTLE and absf(p.global_position.y - TOP) < 0.05 and p.global_position.z < 43.0, "W climbs onto the ledge (y %.2f)" % p.global_position.y)
 
-	# Shimmy: D right (east, facing north) to the ledge's end, the hands with it; A back left.
+	# Shimmy: D right (east, facing north) to the ledge's end; A back left.
 	await hang(c, tree, keys)
 	var x0: float = p.global_position.x
 	keys[KEY_D] = true
 	steps(c, 30)
 	var x_half: float = p.global_position.x
-	var hand: Dictionary = p.hand_contact()
 	steps(c, 120)
 	var x_end: float = p.global_position.x
 	steps(c, 60)
 	keys.erase(KEY_D)
-	check.call(absf(x_half - x0 - 1.0) < 0.1 and absf(float(hand.point.x) - x_half) < 0.05, "D shimmies right at 2 m/s (%.2f m in 0.5 s); the ledge hands follow" % (x_half - x0))
+	check.call(absf(x_half - x0 - 1.0) < 0.1, "D shimmies right at 2 m/s (%.2f m in 0.5 s)" % (x_half - x0))
 	check.call(x_end > LEDGE_X[1] - 0.6 and x_end <= LEDGE_X[1] + 0.35 and absf(p.global_position.x - x_end) < 0.01 and p.state == p.Move.MANTLE, "it stops at the ledge's end (x %.2f) and keeps hanging" % x_end)
 	keys[KEY_A] = true
 	steps(c, 30)

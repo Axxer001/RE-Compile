@@ -11,9 +11,10 @@ extends RefCounted
 enum Context { GAMEPLAY, OVERLAY, PAUSE, DEATH, EXTRACTION }
 
 const ACTIONS := ["move_forward", "move_left", "move_back", "move_right", "dash", "crouch", "jump",
-	"attack", "special", "skill_1", "skill_2", "spell_1", "spell_2", "spell_3", "interact", "grimoire", "effects_tab", "pause", "confirm"]
+	"attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact", "grimoire", "effects_tab", "pause", "confirm"]
 # Held/edge intents sampled every tick (everything else is a discrete press).
-const HELD := ["dash", "crouch", "jump", "attack", "special", "skill_1", "skill_2", "spell_1", "spell_2", "spell_3", "interact"]
+# Q closes or reopens the held book; E is unbound [Sir, 2026-11-20]: 1-4 turn the held grimoire, 5 opens its status page.
+const HELD := ["dash", "crouch", "jump", "attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact"]
 
 var keys := {}    # action -> first physical keycode bound
 var buttons := {} # action -> first mouse button bound

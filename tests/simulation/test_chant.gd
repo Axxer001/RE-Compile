@@ -2,7 +2,7 @@ extends RefCounted
 # P6 Spell Chanting (GDD §3.4.4, Tech Spec §3.3, handoff §6, Sir R2-R5): tiers
 # and the guardrail, per-stat difficulty, fresh topic-bound problems, the answer
 # check, the reward (+1 point's worth, no level), Reset stats, hits, and the
-# chant tier surviving a death.
+# chant tier surviving a restart and going back to tier 1 on a death.
 
 const DT := 1.0 / 60.0
 const Chant = preload("res://scripts/core/chant_engine.gd")
@@ -102,19 +102,20 @@ static func run(check: Callable, c: Node3D) -> void:
 	var lvl0: int = pr.level
 	var exp0: int = pr.exp
 	var r2: Dictionary = gp.submit_chant(prob.answers)
-	check.call(r2.ok and st.points.magic_pow == 0 and st.chant_points.magic_pow == 1 and absf(st.value("magic_pow", s.run.time) - 105.0) < 0.01 and pr.level == lvl0 and pr.exp == exp0 and st.unspent == 0, "right (tier 1): Magic Pow +5, no EXP, no level, no stat point [R9/R10]")
+	check.call(r2.ok and st.points.magic_pow == 0 and st.chant_points.magic_pow == 1 and absf(st.value("magic_pow", s.run.time) - 1050.0) < 0.01 and pr.level == lvl0 and pr.exp == exp0 and st.unspent == 0, "right (tier 1): Magic Pow +50, no EXP, no level, no stat point [R9/R10]")
 	check.call(int(s.meta.chant_tier.magic_pow) == 1 and gp.mode == "browse", "the stat's chant tier rises (kept in the profile)")
 	var nxt: Dictionary = gp.start_chant("magic_pow")
 	check.call(nxt.blanks == 2 and nxt.tier == 1, "the next Magic Pow chant is harder: 2 blanks")
 	gp.cancel_chant()
 	var hp_c: Dictionary = gp.start_chant("max_hp")
 	check.call(hp_c.blanks == 1 and hp_c.tier == 1, "difficulty is per stat: Max HP is still at 1 blank")
-	# A hit mid-chant restarts it with a fresh problem [R1].
-	var k0: String = gp.problem.key
+	# Damage closes and cancels the chant; a new attempt starts after reopening.
 	c.player.health.apply(DamagePacket.new(98001, "test", "infected", 5.0, "bite"), s.run.time)
-	check.call(gp.visible and gp.mode == "chant" and gp.problem.key != k0 and gp.problem.tier == 1, "a hit during a chant restarts it with a fresh problem, same tier, panel open")
+	check.call(not gp.visible and gp.problem.is_empty() and st.chant_points.max_hp == 0, "damage closes the chant without granting a stat increase")
+	s.handle_action("grimoire")
+	gp.start_chant("max_hp")
 	var hp_ok: Dictionary = gp.submit_chant(gp.problem.answers)
-	check.call(hp_ok.ok and absf(st.value("max_hp", s.run.time) - 105.0) < 0.01, "a Max HP chant: +5 HP")
+	check.call(hp_ok.ok and absf(st.value("max_hp", s.run.time) - 1050.0) < 0.01, "a Max HP chant: +50 HP")
 	# A tier-4 chant pays x1.5 [R10]: all pages unlocked, Atk Spd chanted 6 times before.
 	for id in all5: s.meta.unlock(id)
 	s.meta.chant_tier["atk_spd"] = 6
@@ -133,15 +134,19 @@ static func run(check: Callable, c: Node3D) -> void:
 	var armed: int = gp.reset_stats()
 	var still: bool = st.points.mov_spd == 1
 	var refund: int = gp.reset_stats()
-	check.call(armed == -1 and still and refund == 5 and st.unspent == 5 and absf(st.value("magic_pow", s.run.time) - 100.0) < 0.01 and absf(st.value("atk_spd", s.run.time) - 5.0) < 0.01 and absf(st.value("mov_spd", s.run.time) - 10.0) < 0.01, "Reset stats (pressed twice): every stat at base, 2 allocated + 3 chants back as 5 points (1 per chant, whatever its tier)")
+	check.call(armed == -1 and still and refund == 5 and st.unspent == 5 and absf(st.value("magic_pow", s.run.time) - 1000.0) < 0.01 and absf(st.value("atk_spd", s.run.time) - 5.0) < 0.01 and absf(st.value("mov_spd", s.run.time) - 10.0) < 0.01, "Reset stats (pressed twice): every stat at base, 2 allocated + 3 chants back as 5 points (1 per chant, whatever its tier)")
 	check.call(int(s.meta.chant_tier.magic_pow) == 1, "a reset keeps the chant difficulty")
 	s.handle_action("grimoire")
 
 	# ---- death [R5] ---------------------------------------------------------------------------
 	st.unspent = 0
+	s.restart() # a restart (pause menu) is not a death: the tiers stay
+	await tree.physics_frame
+	check.call(int(s.meta.chant_tier.get("magic_pow", 0)) == 1 and int(s.meta.chant_tier.get("max_hp", 0)) == 1 and s.stats.points.magic_pow == 0 and s.stats.unspent == 0, "after a restart: chant gains are gone, each stat's chant tier is kept")
+	s.meta.note_death(10.0) # [Sir, 2026-11-14] a death sends every chant back to tier 1
 	s.restart()
 	await tree.physics_frame
-	check.call(int(s.meta.chant_tier.get("magic_pow", 0)) == 1 and int(s.meta.chant_tier.get("max_hp", 0)) == 1 and s.stats.points.magic_pow == 0 and s.stats.unspent == 0, "after a death: chant gains are gone, each stat's chant tier is kept")
+	check.call(s.meta.chant_tier.is_empty() and Chant.difficulty(0, s.meta.unlocked).tier == 1, "after a death: every stat's chant is back to tier 1")
 	s.meta.reset()
 	s.restart()
 	await tree.physics_frame

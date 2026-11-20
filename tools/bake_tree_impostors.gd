@@ -3,11 +3,13 @@ extends SceneTree
 # rendered side-on (orthographic, transparent background, flat even lighting)
 # into a PNG that dark_forest.gd draws on crossed quads beyond NEAR_END.
 #   godot --path . -s res://tools/bake_tree_impostors.gd      (needs a GPU: not headless)
-# Output: assets/quaternius/nature/impostors/<Kind>.png (CC0, derived from the kit).
+# Output: assets/tropical/impostors/<Kind>.png (derived from Sir's tropical plants).
+# [2026-11-20: rebaked for Narra, Mango, Banana and Bamboo, which replace the pines.]
 
-const KIT := "res://assets/quaternius/nature/"
-const OUT := "res://assets/quaternius/nature/impostors/"
-const KINDS := ["Pine_5", "DeadTree_1"]
+const SRC := "res://assets/tropical/"
+const FILES := {"Narra": "narra_tree.glb", "Mango": "mango_tree.glb", "Banana": "banana_tree.glb", "Bamboo": "bamboo_clump.glb"}
+const OUT := "res://assets/tropical/impostors/"
+const KINDS := ["Narra", "Mango", "Banana", "Bamboo"]
 const W := 256
 const H := 512
 
@@ -35,7 +37,7 @@ func _bake() -> void:
 		sun.rotation_degrees = Vector3(-35, 20, 0)
 		sun.light_energy = 0.6
 		vp.add_child(sun)
-		var tree: Node3D = (load(KIT + kind + ".gltf") as PackedScene).instantiate()
+		var tree: Node3D = (load(SRC + FILES[kind]) as PackedScene).instantiate()
 		vp.add_child(tree)
 		var aabb := AABB()
 		var first := true

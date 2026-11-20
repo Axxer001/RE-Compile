@@ -2,8 +2,8 @@ extends RefCounted
 # P2 combat core (docs/pivot-grimoire-plan.md §4.3-4.4, GDD §5 page 1):
 # basic fireball on the Atk Spd interval, the special at the crosshair point
 # on a Spell Mastery cooldown, 3.5 m AOE detonations (one action per blast),
-# Burn (2% Pow/s, 5 s / 10 s, refresh not stack), the MP pool, the casting
-# hands, and a restart clearing it all. Driven through the session with
+# Burn (2% Pow/s, 5 s / 10 s, refresh not stack), the MP pool, no casting
+# while mantling, and a restart clearing it all. Driven through the session with
 # synthetic keys and mouse buttons, like play.
 
 const DT := 1.0 / 60.0
@@ -110,22 +110,22 @@ static func run(check: Callable, c: Node3D) -> void:
 	var hit_at := -1.0
 	for i in 90:
 		s.step(DT)
-		if foe.health.hp < 120.0 and foe.health.hp < foe.health.max_hp and hit_at < 0.0:
+		if foe.health.hp < foe.health.max_hp and hit_at < 0.0:
 			hit_at = s.run.time
 			break
 	var after_hit: float = foe.health.hp
-	check.call(hit_at > 0.0 and is_equal_approx(foe.health.max_hp - after_hit, 10.0) and hit_at - t_cast < 1.0, "LMB: a basic fireball reaches the enemy 8 m ahead in %.2f s for 10%% of Pow (%.1f)" % [hit_at - t_cast, foe.health.max_hp - after_hit])
+	check.call(hit_at > 0.0 and is_equal_approx(foe.health.max_hp - after_hit, 100.0) and hit_at - t_cast < 1.0, "LMB: a basic fireball reaches the enemy 8 m ahead in %.2f s for 10%% of Pow (%.1f)" % [hit_at - t_cast, foe.health.max_hp - after_hit])
 	check.call(c.effects.has("sprite_1", "Burn", s.run.time) and absf(c.effects.remaining("sprite_1", "Burn", s.run.time) - 5.0) < 0.1, "the hit burns: Burn on the enemy for 5 s")
 	foe.health.hp = after_hit
 	for i in 30: s.step(DT) # sample mid-way between ticks (they fall every 1 s from the hit)
 	var hp0: float = foe.health.hp
 	for i in int(round(2.0 / DT)): s.step(DT)
-	check.call(absf((hp0 - foe.health.hp) - 4.0) < 0.01, "Burn: 2%% of Pow per second (%.1f in 2 s)" % (hp0 - foe.health.hp))
+	check.call(absf((hp0 - foe.health.hp) - 40.0) < 0.01, "Burn: 2%% of Pow per second (%.1f in 2 s)" % (hp0 - foe.health.hp))
 	# Re-apply at 2 s: the timer refreshes, the rate does not stack.
 	var refresh: String = c.effects.apply("sprite_1", "Burn", 5.0, s.run.time, "player", 100.0)
 	var hp1: float = foe.health.hp
 	for i in int(round(2.0 / DT)): s.step(DT)
-	check.call(refresh == "refreshed" and absf((hp1 - foe.health.hp) - 4.0) < 0.01 and absf(c.effects.remaining("sprite_1", "Burn", s.run.time) - 3.0) < 0.1, "re-applied Burn refreshes to full, same 2/s rate (%.1f in 2 s, %.1f s left)" % [hp1 - foe.health.hp, c.effects.remaining("sprite_1", "Burn", s.run.time)])
+	check.call(refresh == "refreshed" and absf((hp1 - foe.health.hp) - 40.0) < 0.01 and absf(c.effects.remaining("sprite_1", "Burn", s.run.time) - 3.0) < 0.1, "re-applied Burn refreshes to full, same 20/s rate (%.1f in 2 s, %.1f s left)" % [hp1 - foe.health.hp, c.effects.remaining("sprite_1", "Burn", s.run.time)])
 	for i in int(round(3.5 / DT)): s.step(DT) # past the refreshed 5 s
 	var hp2: float = foe.health.hp
 	for i in 60: s.step(DT)
@@ -179,6 +179,8 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(pc.special_casts == 1, "RMB on cooldown does nothing")
 	# Damage and Burn: 50% of Pow, Burn 10 s.
 	foe.reset_to(Vector3(60, 0, 47), 180.0, c.noise.last_id()); foe.inert = true
+	foe.health.max_hp = 100000.0 # outlasts the 500-damage special, so its Burn can be read
+	foe.health.reset()
 	pc.special_ready = 0.0
 	place(c, Vector3(60, 0, 57), 0.0)
 	await tree.physics_frame
@@ -188,7 +190,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	for i in 120:
 		s.step(DT)
 		if foe.health.hp < fhp: break
-	check.call(absf((fhp - foe.health.hp) - 50.0) < 0.01 and absf(c.effects.remaining("sprite_1", "Burn", s.run.time) - 10.0) < 0.1, "the special hits for 50%% of Pow (%.1f) and burns for 10 s" % (fhp - foe.health.hp))
+	check.call(absf((fhp - foe.health.hp) - 500.0) < 0.01 and absf(c.effects.remaining("sprite_1", "Burn", s.run.time) - 10.0) < 0.1, "the special hits for 50%% of Pow (%.1f) and burns for 10 s" % (fhp - foe.health.hp))
 	# A targeted area: the special flies to the point under the crosshair and bursts
 	# there even when the enemy it was aimed at has moved off.
 	steps(c, 30)
@@ -215,39 +217,23 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.stats.modifiers.clear()
 	check.call(absf(cd - 12.0) < 0.05, "at 20%% Spell Mastery the special's cooldown is %.2f s (12)" % cd)
 	# Magic Pow scales the hit.
-	s.stats.add_modifier("test_pow", "magic_pow", 1.0, 50.0, s.run.time + 30.0) # Pow 150
+	s.stats.add_modifier("test_pow", "magic_pow", 1.0, 500.0, s.run.time + 30.0) # Pow 1500
 	var shot: Dictionary = pc.cast_basic(s.run.time)
 	s.stats.modifiers.clear()
-	check.call(is_equal_approx(shot.damage, 15.0) and is_equal_approx(shot.pow, 150.0), "Magic Pow 150: a basic fireball carries 15 damage")
+	check.call(is_equal_approx(shot.damage, 150.0) and is_equal_approx(shot.pow, 1500.0), "Magic Pow 1500: a basic fireball carries 150 damage")
 	steps(c, 60)
 
 	# ---- MP pool ---------------------------------------------------------------------
 	check.call(pc.spend_mp(30.0) and is_equal_approx(pc.mp, 70.0) and not pc.spend_mp(80.0) and is_equal_approx(pc.mp, 70.0), "MP: a 30 MP spell spends it; 80 more is refused and spends nothing")
 	check.call(pc.hud_text(s.run.time).begins_with("MP 70/100"), "HUD shows MP (%s)" % pc.hud_text(s.run.time))
 
-	# ---- hands -----------------------------------------------------------------------
-	if pc.arms.skeleton != null:
-		place(c, Vector3(60, 0, 57), 0.0, 20.0)
-		await tree.physics_frame
-		steps(c, 30)
-		pc.publish()
-		var rest_r: Vector3 = pc.arms.rests.r.origin # the free hand (targets follow it each frame)
-		keys[MOUSE_BUTTON_LEFT] = true; s.step(DT); keys.erase(MOUSE_BUTTON_LEFT)
-		pc.publish()
-		var out_r: Vector3 = pc.arms.targets.r.position
-		var left_free: bool = not pc.arms.manual.l
-		var grip_r: String = pc.arms.grip.r
-		steps(c, 12)
-		pc.publish()
-		check.call(out_r.z < rest_r.z - 0.2 and left_free and grip_r == "open", "a basic cast pushes the right palm forward, open (%.2f m), left hand free" % (rest_r.z - out_r.z))
-		check.call(not pc.arms.manual.r and pc.arms.grip.r == "relaxed", "the palm returns after the cast")
-	# No casting while the hands are on a ledge.
+	# No casting while mantling (a ledge hang included).
 	var cp: CharacterBody3D = c.player
 	cp.state = cp.Move.MANTLE
 	var bc: int = pc.basic_casts
 	pc.simulate({"attack": true}, DT, s.run.time + 5.0)
 	cp.state = cp.Move.GROUND
-	check.call(pc.basic_casts == bc, "no casting while mantling or climbing (hands busy)")
+	check.call(pc.basic_casts == bc, "no casting while mantling or climbing")
 
 	# ---- restart ---------------------------------------------------------------------
 	pc.spend_mp(20.0)

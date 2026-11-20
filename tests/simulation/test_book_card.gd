@@ -47,26 +47,36 @@ static func run(check: Callable, c: Node3D) -> void:
 	for id in ["quick_step", "ring_of_fire", "sage_arts"]: s.grimoire.find(id)
 	for id in all5: s.meta.unlock(id)
 	s.handle_action("grimoire")
-	var order: Array = [""] + s.grimoire.listed() # page 1 is the contents
-	check.call(gp.selected == "" and gp.panel.find_child("Contents", true, false) != null and gp.panel.find_child("Search", true, false) != null, "the Grimoire opens on page 1, the Table of Contents, with a search bar [Sir]")
+	var order: Array = [""] + s.grimoire.listed() # the contents precede page 1
+	check.call(gp.selected == "" and gp.page_control("Contents") != null and gp.page_control("Search") != null, "the Grimoire opens on the unnumbered Table of Contents, with a search bar [Sir]")
+	var v: Node = gp.view
+	for i in int(v.OPEN_TOTAL_S / DT) + 2: v.step(DT) # tuck, rise, open: the book is open
+	gp.page_control("toc_sage_arts").pressed.emit()
+	check.call(is_equal_approx(float(v.flip.n) * float(v.flip.each), 1.0) and int(v.flip.n) == gp.page_number("sage_arts") and int(v.flip.dir) == 1, "a contents jump flips one leaf per page between, 1.0 s in all")
+	v.step(1.2)
+	gp.flip(-1)
+	check.call(int(v.flip.n) == 1 and is_equal_approx(float(v.flip.each), 0.5) and int(v.flip.dir) == -1, "a manual backward turn takes half a second")
+	v.step(0.6)
+	gp.show_contents()
 	var seen_pages := [gp.selected]
 	for i in order.size():
 		gp.handle_key(KEY_RIGHT)
 		seen_pages.append(gp.selected)
-	check.call(seen_pages.slice(0, order.size()) == order and seen_pages.back() == "" and gp.panel.find_child("NextPage", true, false) != null, "Right arrow turns through every page in order and wraps to the contents")
+	check.call(seen_pages.slice(0, order.size()) == order and seen_pages.back() == "" and gp.page_control("NextPage") != null, "Right arrow turns through every page in order and wraps to the contents")
 	gp.handle_key(KEY_LEFT)
 	check.call(gp.selected == order.back(), "Left arrow goes back (from the contents to the last page)")
 	# The Previous button sits at the page's bottom-left, Next at its bottom-right.
 	await tree.process_frame
 	await tree.process_frame
-	var pv: Rect2 = gp.view_rect("PrevPage")
-	var nx: Rect2 = gp.view_rect("NextPage")
+	v.step(0.6)
+	var pv: Rect2 = gp.page_control("PrevPage").get_global_rect()
+	var nx: Rect2 = gp.page_control("NextPage").get_global_rect()
 	check.call(pv.size.x > 0.0 and nx.position.x > pv.position.x + 300.0 and absf(pv.position.y - nx.position.y) < 2.0, "Previous page bottom-left, Next page bottom-right")
 	# The loadout is always the left page.
 	gp.select_page("ring_of_fire")
-	var on_page: bool = gp.panel.find_child("slot_attack", true, false) != null
+	var on_page: bool = gp.page_control("slot_spell_1") != null and gp.page_control("ToContents") != null
 	gp.show_contents()
-	check.call(on_page and gp.panel.find_child("slot_attack", true, false) != null and gp.panel.find_child("ToContents", true, false) != null, "the loadout stays on the left page on every page; the contents button is at the top-left")
+	check.call(on_page and gp.page_control("slot_spell_1") != null, "the loadout stays on the left page on every page; an ability page's footer has the Contents link")
 	# The contents: one column, icon + name + short line + page number; locked rows show no line.
 	var rows: Array = gp.toc_list.get_children()
 	var r0: Control = gp.toc_list.find_child("toc_scorch_and_burn", false, false)
@@ -83,65 +93,74 @@ static func run(check: Callable, c: Node3D) -> void:
 	gp.toc_list.find_child("toc_sage_arts", false, false).pressed.emit()
 	check.call(gp.selected == "sage_arts", "clicking a row jumps to its page")
 	gp.show_contents()
-	check.call(gp.equip_selected("spell_1") == "no_page" and c.pcombat.loadout.spell_1 == null, "on the contents a slot click equips nothing (no page open)")
+	check.call(gp.equip_selected("spell_4") == "no_page" and c.pcombat.loadout.spell_4 == null, "on the contents a slot click equips nothing (no page open)")
 	# A / D switch the two views; equal heights [Sir].
 	await tree.process_frame
 	await tree.process_frame
-	var book_h: float = gp.view_rect("Book").size.y
+	# The mouse-to-page mapping follows the tilted book: a page pixel projected
+	# to the screen maps back to the same pixel, the book leaning or not.
+	gp.show_contents()
+	v.step(0.6)
+	var map_ok := true
+	for lean in [Vector2.ZERO, Vector2(0.1, -0.08)]:
+		v.alive_tilt = lean
+		v.alive_vel = Vector2.ZERO
+		v._set_pose(v._view_pose())
+		for side in [true, false]:
+			var px := Vector2(312, 777)
+			var hit: Dictionary = v.page_hit(v.screen_of(side, px))
+			if hit.is_empty() or bool(hit.left) != side or (hit.px as Vector2).distance_to(px) > 0.5: map_ok = false
+	v.alive_tilt = Vector2.ZERO
+	check.call(map_ok, "the tilted 3D page maps a projected click back to its page pixel (both pages, leaning or not)")
+	var sc_win: Vector2 = v.window_point_of(gp.page_control("toc_sage_arts"), false)
+	check.call(sc_win == gp.get_viewport().get_screen_transform() * v.screen_of(false, gp.page_control("toc_sage_arts").get_global_rect().get_center()), "synthetic clicks go through the window's screen transform (the stretch fix)")
 	gp.handle_key(KEY_D)
 	await tree.process_frame
-	await tree.process_frame
-	var card_h: float = gp.view_rect("CardFace").size.y
-	check.call(gp.tab == "player_id" and (gp.panel.find_child("ViewTitle", true, false) as Label).text == "Player ID" and book_h > 800.0 and absf(book_h - card_h) < 1.0, "D switches to the Player ID; the book and the card are the same height (%.0f, %.0f)" % [book_h, card_h])
+	check.call(gp.tab == "player_id" and (gp.page_control("ViewTitle") as Label).text == "Player ID" and v.mode == "sink", "D switches to the Player ID; the book goes down first")
 	gp.handle_key(KEY_A)
-	check.call(gp.tab == "grimoire", "A switches back")
-	var tall := []
-	var book_w := -1.0
-	for pid in gp.pages(): # every page of the book keeps the same size [Sir]
+	check.call(gp.tab == "grimoire" and v.mode == "equip", "A straight after D: the card never came up, so the book turns back")
+	for i in int(v.EQUIP_S / DT) + 2: v.step(DT)
+	var odd_pages := []
+	for pid in gp.pages(): # every page of the book is the same paper [Sir]
 		if pid == "": gp.show_contents()
 		else: gp.select_page(pid)
-		await tree.process_frame
-		await tree.process_frame
-		var r: Rect2 = gp.view_rect("Book")
-		if book_w < 0.0: book_w = r.size.x
-		if absf(r.size.y - card_h) >= 1.0 or absf(r.size.x - book_w) >= 1.0: tall.append("%s %.0fx%.0f" % [pid if pid != "" else "contents", r.size.x, r.size.y])
+		var root: Control = v.right_vp.get_child(0) if v.right_vp.get_child_count() > 0 else null
+		if root == null or root.size != Vector2(v.PAGE_PX): odd_pages.append(pid)
 	s.grimoire.meta.unlocked.erase("quick_step")
 	gp.start_assembly("quick_step")
-	await tree.process_frame
-	await tree.process_frame
-	var ar: Rect2 = gp.view_rect("Book")
-	if absf(ar.size.y - card_h) >= 1.0 or absf(ar.size.x - book_w) >= 1.0: tall.append("assembly %.0fx%.0f" % [ar.size.x, ar.size.y])
+	var aroot: Control = v.right_vp.get_child(0)
+	if aroot.size != Vector2(v.PAGE_PX) or gp.page_control("line_0") == null: odd_pages.append("assembly")
 	gp.cancel_assembly()
 	s.grimoire.meta.unlock("quick_step")
-	check.call(tall.is_empty() and book_w > 1000.0, "every page of the book, the Code Assembly too, is the same size, the card's height %s" % str(tall))
+	check.call(odd_pages.is_empty(), "every page of the book, the Code Assembly too, is the same page %s" % str(odd_pages))
 	# The switcher is centred on the title; Close sits under the book [Sir].
 	await tree.process_frame
 	await tree.process_frame
 	var title_r: Rect2 = gp.view_rect("ViewTitle")
 	var vp_w: float = gp.panel.get_viewport_rect().size.x
 	var close_r: Rect2 = gp.view_rect("Close")
-	check.call(absf(title_r.get_center().x - vp_w * 0.5) < 3.0 and close_r.position.y >= gp.view_rect("Book").end.y - 0.5 and gp.panel.find_child("Switcher", true, false).find_child("Close", true, false) == null, "'< [A] Grimoire [D] >' centred; Close (Tab) at the bottom (title %.0f of %.0f; close %.0f, book end %.0f)" % [title_r.get_center().x, vp_w, close_r.position.y, gp.view_rect("Book").end.y])
-	var blur: ColorRect = gp.blur
-	check.call(blur != null and blur.visible and is_equal_approx(float(blur.material.get_shader_parameter("amount")), 0.5), "the world behind is blurred 50%")
+	check.call(absf(title_r.get_center().x - vp_w * 0.5) < 3.0 and close_r.position.y > title_r.end.y and gp.page_control("Switcher").find_child("Close", true, false) == null, "'< [A] Grimoire [D] >' centred; Close (Tab) at the bottom (title %.0f of %.0f; close %.0f, book end %.0f)" % [title_r.get_center().x, vp_w, close_r.position.y, gp.view_rect("Book").end.y])
+	v.step(0.1)
+	check.call(not gp.blur.visible and v.blur_layer.visible and is_equal_approx(v.blur_amount, 1.0), "the world behind the open book is blurred and darkened (the View's own blur)")
 	var pow: float = s.stats.value("magic_pow", s.run.time)
 	var sc: Array = gp.page_stats("scorch_and_burn")
 	var row := func(rows: Array, k: String) -> String:
 		for r in rows: if r[0] == k: return r[1]
 		return ""
-	check.call(row.call(sc, "Basic fireball").begins_with("%d damage" % roundi(pow * 0.10)) and row.call(sc, "Special (RMB)").begins_with("%d damage" % roundi(pow * 0.5)) and row.call(sc, "Burn").begins_with("2 damage/s for 5 s"), "Scorch and Burn's page: its damage from Magic Pow (%s; %s)" % [row.call(sc, "Basic fireball"), row.call(sc, "Burn")])
-	s.stats.points.magic_pow = 4 # +20 Pow: the numbers follow
+	check.call(row.call(sc, "Basic fireball").begins_with("%d damage" % roundi(pow * 0.10)) and row.call(sc, "Special (RMB)").begins_with("%d damage" % roundi(pow * 0.5)) and row.call(sc, "Burn").begins_with("20 damage/s for 5 s"), "Scorch and Burn's page: its damage from Magic Pow (%s; %s)" % [row.call(sc, "Basic fireball"), row.call(sc, "Burn")])
+	s.stats.points.magic_pow = 4 # +200 Pow: the numbers follow
 	var sc2: Array = gp.page_stats("scorch_and_burn")
-	check.call(row.call(sc2, "Basic fireball").begins_with("12 damage"), "the numbers are live: +20 Magic Pow -> %s" % row.call(sc2, "Basic fireball"))
+	check.call(row.call(sc2, "Basic fireball").begins_with("120 damage"), "the numbers are live: +200 Magic Pow -> %s" % row.call(sc2, "Basic fireball"))
 	s.stats.points.magic_pow = 0
 	var sage: Array = gp.page_stats("sage_arts")
 	var ring: Array = gp.page_stats("ring_of_fire")
-	check.call(row.call(sage, "Healing").begins_with("3 HP/s") and row.call(sage, "Mana").begins_with("5 MP/s") and row.call(ring, "Orbs").begins_with("6 at 3 m") and row.call(ring, "Scorched Slow").begins_with("-90%"), "Sage Arts heals 3 HP/s and 5 MP/s; Ring of Fire: 6 orbs, Scorched Slow -90%")
+	check.call(row.call(sage, "Healing").begins_with("30 HP/s") and row.call(sage, "Mana").begins_with("5 MP/s") and row.call(ring, "Orbs").begins_with("6 at 3 m") and row.call(ring, "Scorched Slow").begins_with("-90%"), "Sage Arts heals 30 HP/s and 5 MP/s; Ring of Fire: 6 orbs, Scorched Slow -90%")
 	gp.select_page("ring_of_fire")
-	var stats_box: Control = gp.panel.find_child("PageStats", true, false)
+	var stats_box: Control = gp.page_control("PageStats")
 	var labels: Array = stats_box.find_children("*", "Label", true, false).map(func(l): return l.text) if stats_box else []
-	check.call(labels.has("Damage per hit") and gp.page_text("ring_of_fire").contains("Damage per hit: 15"), "the page shows its numbers as a ledger, and page_text carries them")
-	var slots := ["attack", "skill_1", "skill_2", "spell_1", "spell_2", "spell_3", "passive"]
-	check.call(slots.all(func(sl): return gp.panel.find_child("slot_" + sl, true, false) != null), "the loadout: I Attack, II Skills, III Spells, IV Passive as slot circles")
+	check.call(labels.has("Damage per hit") and gp.page_text("ring_of_fire").contains("Damage per hit: 150"), "the page shows its numbers as a ledger, and page_text carries them")
+	var slots := ["spell_1", "spell_2", "spell_3", "spell_4", "passive"]
+	check.call(slots.all(func(sl): return gp.page_control("slot_" + sl) != null) and gp.page_control("slot_attack") == null, "the loadout: I Spells (4 pages), II Passive as slot circles [2026-11-20]")
 	s.handle_action("grimoire")
 
 	# ---- records and the card front ---------------------------------------------------------------
@@ -151,32 +170,32 @@ static func run(check: Callable, c: Node3D) -> void:
 	sh.inert = true
 	sh.health.apply(DamagePacket.new(92001, "player", "player", 37.0, "blast"), s.run.time)
 	sh.health.apply(DamagePacket.new(92002, "player", "player", 12.0, "blast"), s.run.time)
-	sh.health.apply(DamagePacket.new(92003, "player", "player", 500.0, "blast"), s.run.time) # applied: what was left (71)
+	sh.health.apply(DamagePacket.new(92003, "player", "player", 5000.0, "blast"), s.run.time) # applied: what was left (451 of the Sprite's 500)
 	var rec: Dictionary = s.meta.records
-	check.call(is_equal_approx(float(rec.best_hit), 71.0) and int(rec.total_kills) == 1 and int(rec.best_kills) == 1, "records: the highest damage dealt (%.0f) and kills are kept" % float(rec.best_hit))
+	check.call(is_equal_approx(float(rec.best_hit), 451.0) and int(rec.total_kills) == 1 and int(rec.best_kills) == 1, "records: the highest damage dealt (%.0f) and kills are kept" % float(rec.best_hit))
 	s.handle_action("grimoire")
 	gp.show_tab("player_id")
-	var lr: String = (gp.panel.find_child("LevelRank", true, false) as Label).text
-	var loc: String = (gp.panel.find_child("Location", true, false) as Label).text
-	var r_texts: Array = gp.panel.find_child("Records", true, false).find_children("*", "Label", true, false).map(func(l): return l.text)
-	var cl: TextureRect = gp.panel.find_child("CrestLeft", true, false)
-	var cr: TextureRect = gp.panel.find_child("CrestRight", true, false)
-	check.call(cl != null and cl.texture != null and cr != null and cr.texture != null and (gp.panel.find_child("BandTop", true, false) as Label).text == "GUILD OF THE CRIMSONS" and (gp.panel.find_child("BandHouse", true, false) as Label).text == "House of the Pythons", "the band: the academy seal left, the House of the Pythons crest right, 'Guild of the Crimsons' and 'House of the Pythons' [Sir]")
-	check.call(gp.panel.find_child("CardNo", true, false) == null and lr == "LV 1  -  RANK E" and loc.begins_with("Training Arena") and loc.ends_with("World Level 1") and gp.panel.find_child("Portrait", true, false) != null, "the card front: portrait, '%s', '%s'; no card number, no signatory" % [lr, loc])
+	var lr: String = (gp.page_control("LevelRank") as Label).text
+	var loc: String = (gp.page_control("Location") as Label).text
+	var r_texts: Array = gp.page_control("Records").find_children("*", "Label", true, false).map(func(l): return l.text)
+	var cl: TextureRect = gp.page_control("CrestLeft")
+	var cr: TextureRect = gp.page_control("CrestRight")
+	check.call(cl != null and cl.texture != null and cr != null and cr.texture != null and (gp.page_control("BandTop") as Label).text == "GUILD OF THE CRIMSONS" and (gp.page_control("BandHouse") as Label).text == "House of the Pythons", "the band: the academy seal left, the House of the Pythons crest right, 'Guild of the Crimsons' and 'House of the Pythons' [Sir]")
+	check.call(gp.page_control("CardNo") == null and lr == "LV 1  -  RANK E" and loc.begins_with("Training Arena") and loc.ends_with("World Level 1") and gp.page_control("Portrait") != null, "the card front: portrait, '%s', '%s'; no card number, no signatory" % [lr, loc])
 	await tree.process_frame
 	await tree.process_frame
 	var front_h: float = gp.view_rect("CardFace").size.y
-	var band_sb: StyleBoxFlat = (gp.panel.find_child("Band", true, false) as PanelContainer).get_theme_stylebox("panel")
+	var band_sb: StyleBoxFlat = (gp.page_control("Band") as PanelContainer).get_theme_stylebox("panel")
 	check.call(band_sb.corner_radius_top_left == 22 and band_sb.corner_radius_top_right == 22, "the band's top corners are rounded like the card")
-	check.call((gp.panel.find_child("Records", true, false) as GridContainer).columns == 4, "the records sit in two columns (label and value each)")
-	check.call(r_texts.has("Highest damage dealt") and r_texts.has("71") and r_texts.has("Pages unlocked") and r_texts.has("%d / %d" % [s.meta.unlocked.size(), PageLibrary.IDS.size()]) and r_texts.has("Spell chants done") and r_texts.has("Most kills in one run"), "the front lists the records (pages, kinds obtained, chants, best hit, kills...)")
+	check.call((gp.page_control("Records") as GridContainer).columns == 4, "the records sit in two columns (label and value each)")
+	check.call(r_texts.has("Highest damage dealt") and r_texts.has("451") and r_texts.has("Pages unlocked") and r_texts.has("%d / %d" % [s.meta.unlocked.size(), PageLibrary.IDS.size()]) and r_texts.has("Spell chants done") and r_texts.has("Most kills in one run"), "the front lists the records (pages, kinds obtained, chants, best hit, kills...)")
 	gp.handle_key(KEY_SPACE)
 	await tree.process_frame
 	await tree.process_frame
 	var back_h: float = gp.view_rect("CardFace").size.y
-	check.call(gp.card_side == "back" and gp.panel.find_child("StatTable", true, false) != null and gp.panel.find_child("raise_magic_pow", true, false) != null, "Space flips the card: the back, the stats table with a raise button per stat")
+	check.call(gp.card_side == "back" and gp.page_control("StatTable") != null and gp.page_control("raise_magic_pow") != null, "Space flips the card: the back, the stats table with a raise button per stat")
 	gp.reset_stats()
-	var conf: Label = gp.panel.find_child("ResetConfirm", true, false)
+	var conf: Label = gp.page_control("ResetConfirm")
 	check.call(conf != null and conf.text == "Press Reset stats again to confirm." and gp.status_text == "", "'press again to confirm' shows by the Reset button, not at the top")
 	gp.reset_armed = false
 	gp.refresh()
@@ -190,8 +209,8 @@ static func run(check: Callable, c: Node3D) -> void:
 	await tree.process_frame
 	var chant_h: float = gp.view_rect("CardFace").size.y
 	check.call(absf(chant_h - front_h) < 1.0 and not gp.handle_key(KEY_SPACE), "the chant card is the same height; Space does not flip it mid-chant")
-	check.call(gp.card_side == "back" and gp.panel.find_child("ChantCode", true, false) != null and gp.panel.find_child("StatTable", true, false) == null and gp.panel.find_child("FlipCard", true, false) == null, "a chant takes over the card's back (code and blanks only)")
-	var hb: Button = gp.panel.find_child("Hint", true, false)
+	check.call(gp.card_side == "back" and gp.page_control("ChantCode") != null and gp.page_control("StatTable") == null and gp.page_control("FlipCard") == null, "a chant takes over the card's back (code and blanks only)")
+	var hb: Button = gp.page_control("Hint")
 	check.call(hb != null and hb.disabled and not gp.hint_ready() and gp.use_hint() == "", "the hint is locked at first")
 	# A fixed code box, whatever the problem: the card never grows; the font fits the box.
 	var odd := []
@@ -202,7 +221,7 @@ static func run(check: Callable, c: Node3D) -> void:
 		gp.refresh()
 		await tree.process_frame
 		await tree.process_frame
-		var box: Control = gp.panel.find_child("ChantBox", true, false)
+		var box: Control = gp.page_control("ChantBox")
 		var lab: Label = box.find_child("ChantCode", true, false)
 		var csc: ScrollContainer = box.find_child("ChantScroll", true, false)
 		if absf(gp.view_rect("CardFace").size.y - front_h) >= 1.0 or box.size != gp.chant_box_size() or csc == null or csc.size.y > box.size.y or lab.get_theme_font_size("font_size") < gp.CHANT_MIN_FONT:
@@ -216,7 +235,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	gp.refresh()
 	await tree.process_frame
 	await tree.process_frame
-	var lsc: ScrollContainer = gp.panel.find_child("ChantScroll", true, false)
+	var lsc: ScrollContainer = gp.page_control("ChantScroll")
 	var bar: VScrollBar = lsc.get_v_scroll_bar()
 	var llab: Label = lsc.find_child("ChantCode", true, false)
 	check.call(absf(gp.view_rect("CardFace").size.y - front_h) < 1.0 and llab.size.y > lsc.size.y and bar.max_value > lsc.size.y and llab.get_theme_font_size("font_size") == gp.CHANT_MIN_FONT, "a long question scrolls inside its box (text %.0f px in a %.0f px box); the card keeps its size" % [llab.size.y, lsc.size.y])
@@ -224,30 +243,32 @@ static func run(check: Callable, c: Node3D) -> void:
 	gp._draw_chant()
 	gp.refresh()
 	p0 = gp.problem
-	# Visit the Grimoire mid-chant [Sir]: nothing is cancelled, and what was typed is still there.
-	var blank: LineEdit = gp.panel.find_child("blank_1", true, false)
-	blank.text = "fireball"
-	blank.text_changed.emit("fireball")
+	# Visit the Grimoire mid-chant [Sir]: nothing is cancelled, and the placed token is still there.
+	var tok0: String = String(gp.problem.choices[0])
+	gp.choose(tok0)
 	gp.handle_key(KEY_D)
 	var in_book: bool = gp.tab == "grimoire" and gp.mode == "chant" and gp.problem.key == p0.key
 	gp.select_page("scorch_and_burn")
 	gp.handle_key(KEY_RIGHT)
 	var still: bool = gp.mode == "chant" and gp.problem.key == p0.key
 	gp.handle_key(KEY_A)
-	var back_blank: LineEdit = gp.panel.find_child("blank_1", true, false)
-	check.call(in_book and still and gp.tab == "player_id" and gp.panel.find_child("ChantBox", true, false) != null and back_blank != null and back_blank.text == "fireball", "a chant survives a visit to the Grimoire (pages turned): back on the card, the same problem and the typed answer")
+	var back_slot: Button = gp.page_control("slot_1")
+	check.call(in_book and still and gp.tab == "player_id" and gp.page_control("ChantBox") != null and back_slot != null and back_slot.text.ends_with(tok0) and gp.chant_slots[0] == tok0, "a chant survives a visit to the Grimoire (pages turned): back on the card, the same problem and the placed token")
 	steps(c, 9.8)
 	var early: bool = gp.hint_ready()
 	steps(c, 0.3)
-	hb = gp.panel.find_child("Hint", true, false)
-	var wait_l: Label = gp.panel.find_child("HintWait", true, false)
+	hb = gp.page_control("Hint")
+	var wait_l: Label = gp.page_control("HintWait")
 	check.call(wait_l != null and wait_l.text.begins_with("Ready"), "the hint line turns to 'Ready' by itself when the hint unlocks")
 	var title: String = s.grimoire.page(String(p0.page)).title
 	var said: String = gp.use_hint()
-	check.call(not early and not hb.disabled and said == "Hint: study the page \"%s\" in your Grimoire." % title and gp.panel.find_child("HintText", true, false) != null, "after 10 s the hint unlocks and only names the page: '%s'" % said)
+	check.call(not early and not hb.disabled and said == "Hint: study the page \"%s\" in your Grimoire." % title and gp.page_control("HintText") != null, "after 10 s the hint unlocks and only names the page: '%s'" % said)
 	check.call(not said.contains(String(p0.answers[0])), "the hint never gives the answer away")
 	c.player.health.apply(DamagePacket.new(92010, "test", "infected", 2.0, "bite"), s.run.time)
-	check.call(gp.mode == "chant" and not gp.hint_ready() and not gp.hint_shown, "a hit draws a fresh chant: its hint waits 10 s again")
+	check.call(not gp.visible and gp.problem.is_empty(), "damage closes and clears the chant")
+	s.handle_action("grimoire")
+	gp.start_chant("magic_pow")
+	check.call(not gp.hint_ready() and not gp.hint_shown, "a reopened chant waits for its hint again")
 	var n0: int = int(s.meta.records.chants)
 	gp.submit_chant(gp.problem.answers)
 	check.call(int(s.meta.records.chants) == n0 + 1, "a successful chant counts on the card")
@@ -263,7 +284,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.meta.save(tmp)
 	var m2 := MetaProfile.new()
 	m2.load_from(tmp)
-	check.call(is_equal_approx(float(m2.records.best_hit), 71.0) and m2.card_no == s.meta.card_no and int(m2.records.chants) == n0 + 1, "records and the card number are saved with the profile")
+	check.call(is_equal_approx(float(m2.records.best_hit), 451.0) and m2.card_no == s.meta.card_no and int(m2.records.chants) == n0 + 1, "records and the card number are saved with the profile")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp))
 	m2.reset()
 	check.call(float(m2.records.best_hit) == 0.0 and m2.card_no == "", "New game (a profile reset) clears the records")

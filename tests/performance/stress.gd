@@ -60,6 +60,9 @@ func _ready() -> void:
 	var i := 0
 	for id in main.enemies:
 		var e: CharacterBody3D = main.enemies[id]
+		if i >= 20:
+			main._to_reserve(e)
+			continue
 		e.reset_to(Vector3(66.0 + (i % 5) * 4.0, 0, 112.0 + (i / 5) * 3.0), 180.0)
 		e.health.max_hp = 1.0e9
 		e.health.reset()
@@ -86,6 +89,7 @@ func _process(delta: float) -> void:
 	var b: Vector3 = PATH[i + 1]
 	var pos := a.lerp(b, seg_t - i)
 	var dir := (b - a).normalized()
+	pos.y = main.map.terrain.height_at(Vector2(pos.x, pos.z))
 	main.player.global_position = pos
 	main.player.yaw = atan2(-dir.x, -dir.z)
 	main.player.apply_look()
@@ -113,10 +117,10 @@ func _process(delta: float) -> void:
 		set_process(false)
 		report()
 
-# Fireballs from the player's hands at the Sprites (1 damage, Burn on hit)
+# Fireballs from the wand tip at the Sprites (1 damage, Burn on hit)
 # until the pool holds 64 in flight.
 func _keep_pool_full() -> void:
-	var ids: Array = main.enemies.keys()
+	var ids: Array = main.enemies.keys().filter(func(id): return not main.enemies[id].reserve and main.enemies[id].visible)
 	var origin: Vector3 = main.player.eye_position()
 	var k := 0
 	while main.projectiles.shots.size() < main.projectiles.POOL:
@@ -162,7 +166,7 @@ func report() -> void:
 		"effects_ms": snappedf(effects_us / 1000.0 / maxf(1, n), 0.001),
 	}
 	check(n > 300, "sampled enough frames (%d)" % n)
-	check(main.enemies.size() == 20 and main.alive_count() == 20, "20 Blighted Sprites active (the R6 cap)")
+	check(main.alive_count() == 20, "20 Blighted Sprites active (legacy stress workload)")
 	check(max_shots == main.projectiles.POOL and main.projectiles.rings.size() == 1 and max_burning >= 10, "the load: %d fireballs in flight (the pool), a Ring of Fire, up to %d Sprites burning" % [max_shots, max_burning])
 	check(metrics.p95_ms <= P95_BUDGET_MS, "Dark Forest + 20 Sprites + 64 fireballs + ring + burns: p95 %.2f ms <= %.1f ms" % [metrics.p95_ms, P95_BUDGET_MS])
 	var f := FileAccess.open(out_dir + "frametimes.csv", FileAccess.WRITE)

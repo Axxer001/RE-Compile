@@ -58,11 +58,17 @@ static func kind_of(effect_id: String) -> String:
 
 var active := {}   # target_id -> {effect_id -> {until, next_tick, source, pow, serial}}
 var buff_blocked := {} # target_id -> true: buffs are refused (Gambling Addiction on "player")
+# (target_id) -> float: how much of an effect a target takes [2026-11-15]. Kostas
+# Mortus: 0.5, every effect's duration and damage halved. Unset: x1.
+var resist_fn: Callable
 var _serial := 0
 
 # Returns "applied" (new), "refreshed" or "blocked" (a buff on a target that refuses buffs).
 func apply(target_id: String, effect_id: String, duration_s: float, now: float, source := "", magic_pow := 100.0) -> String:
 	if buff_blocked.has(target_id) and kind_of(effect_id) == "buff": return "blocked"
+	var f: float = float(resist_fn.call(target_id)) if resist_fn.is_valid() else 1.0
+	duration_s *= f
+	magic_pow *= f
 	var per: Dictionary = active.get(target_id, {})
 	active[target_id] = per
 	if per.has(effect_id):

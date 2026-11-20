@@ -190,3 +190,39 @@ static func check(problem: Dictionary, given: Array) -> Dictionary:
 	for i in problem.answers.size():
 		if i >= given.size() or not matches(String(given[i]), problem.answers[i]): wrong.append(i)
 	return {"ok": wrong.is_empty(), "wrong": wrong}
+
+# Wordle-style answering [Sir, 2026-11-14]: the player taps ready-typed tokens
+# into the blanks instead of typing. The choices are the answers plus decoys:
+# other tokens of the same tier (from the unlocked pages), then earlier tiers',
+# then a few common pieces of syntax; CHOICES_MAX in all, each once, shuffled.
+const CHOICES_MAX := 6
+const CHOICE_FILLERS := [";", "{", "}", "cout", "<<", "int", "return", "endl", "=", "main"]
+static func choices(problem: Dictionary, unlocked: Array, rng: RandomNumberGenerator) -> Array:
+	var want: Array = []
+	for a in problem.get("answers", []):
+		if not String(a) in want: want.append(String(a))
+	var decoys: Array = []
+	for t in range(int(problem.get("tier", 1)), 0, -1):
+		if not PATTERNS.has(t): continue
+		var pool: Array = []
+		for cnd in candidates(t, unlocked):
+			var tx := String(cnd.token.text)
+			if not tx in want and not tx in decoys and not tx in pool: pool.append(tx)
+		_shuffle(pool, rng)
+		for tx in pool:
+			if want.size() + decoys.size() >= CHOICES_MAX: break
+			decoys.append(tx)
+		if want.size() + decoys.size() >= CHOICES_MAX: break
+	for tx in CHOICE_FILLERS:
+		if want.size() + decoys.size() >= CHOICES_MAX: break
+		if not tx in want and not tx in decoys: decoys.append(tx)
+	var out: Array = want + decoys
+	_shuffle(out, rng)
+	return out
+
+static func _shuffle(a: Array, rng: RandomNumberGenerator) -> void:
+	for i in range(a.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var t = a[i]
+		a[i] = a[j]
+		a[j] = t

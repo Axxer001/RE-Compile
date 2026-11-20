@@ -22,6 +22,9 @@ var _immunity := {}        # source -> [from, until, kinds]
 # (packet) -> bool: asked before a lethal hit lands; true = the actor does not die
 # (Rise of the Phoenix revives the player in place). The guard restores HP itself.
 var death_guard: Callable
+# (packet) -> float: scales an incoming hit before it lands (Kostas Mortus takes
+# 50% less from the front). Unset: x1.
+var incoming_mult: Callable
 
 func _ready() -> void:
 	reset()
@@ -54,6 +57,7 @@ func apply(packet: RefCounted, now: float) -> String:
 	if _seen.has(packet.action_id): return "duplicate"
 	if immune_to(packet.kind, now): return "immune"
 	_seen[packet.action_id] = true
+	if incoming_mult.is_valid(): packet.amount = packet.amount * float(incoming_mult.call(packet))
 	if packet.amount >= hp and death_guard.is_valid() and death_guard.call(packet):
 		damaged.emit(packet, minf(packet.amount, max_hp))
 		return "revived"

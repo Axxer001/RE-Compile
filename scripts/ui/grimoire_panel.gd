@@ -4,7 +4,7 @@ extends CanvasLayer
 # Two views, switched with A / D (or the arrows beside the title):
 #   Grimoire: an open parchment book. The left page is always the loadout
 #     (I Attack, II Skills, III Spells, IV Passive slot circles). The right
-#     page opens on page 1, the Table of Contents: a search bar, then every
+#     page opens on the unnumbered Table of Contents: a search bar, then every
 #     known ability in one scrolling column (icon, name, a short line, its
 #     page number; a locked one shows a locked icon and no description).
 #     Clicking a row jumps to its page; each ability has its own page (live
@@ -20,6 +20,8 @@ extends CanvasLayer
 # session's systems; this panel calls them and shows the result, so tests can
 # drive the same methods headless.
 
+const ViewMode = preload("res://scripts/ui/view_mode.gd") # the Grimoire tab's 3D book [Sir, 2026-11-20]
+const ViewPages = preload("res://scripts/ui/view_pages.gd")
 const AbilityPage = preload("res://scripts/core/ability_page.gd")
 const CodeAssembly = preload("res://scripts/core/code_assembly.gd")
 const Validator = preload("res://scripts/core/code_order_validator.gd")
@@ -30,9 +32,9 @@ const GamblerService = preload("res://scripts/combat/gambler_service.gd")
 const EffectSystem = preload("res://scripts/core/effect_system.gd")
 const PageLibrary = preload("res://scripts/core/page_library.gd")
 const STAT_LABELS := {"max_hp": "Max HP", "max_mp": "Max MP", "magic_pow": "Magic Pow", "mov_spd": "Mov Spd", "atk_spd": "Atk Spd", "spell_mastery": "Spell Mastery"}
-const SLOT_LABELS := {"attack": "Attack", "skill_1": "[E] Skill 1", "skill_2": "[Q] Skill 2", "spell_1": "[1] Spell 1", "spell_2": "[2] Spell 2", "spell_3": "[3] Spell 3", "passive": "[P] Passive"}
-const SLOT_KEYS := {"attack": "LMB", "skill_1": "E", "skill_2": "Q", "spell_1": "1", "spell_2": "2", "spell_3": "3", "passive": "P"}
-const LOADOUT_ROWS := [["I", "Attack", ["attack"]], ["II", "Skills", ["skill_1", "skill_2"]], ["III", "Spells", ["spell_1", "spell_2", "spell_3"]], ["IV", "Passive", ["passive"]]]
+const SLOT_LABELS := {"spell_1": "[1] Page 1", "spell_2": "[2] Page 2", "spell_3": "[3] Page 3", "spell_4": "[4] Page 4", "passive": "[5] Passive"} # held grimoire [2026-11-20]
+const SLOT_KEYS := {"spell_1": "1", "spell_2": "2", "spell_3": "3", "spell_4": "4", "passive": "5"}
+const LOADOUT_ROWS := [["I", "Spells", ["spell_1", "spell_2", "spell_3", "spell_4"]], ["II", "Passive", ["passive"]]] # attack and skill pages go in spell slots [Sir, 2026-11-20]
 const KIND_SECTIONS := [[0, "Attacks"], [1, "Skills"], [2, "Spells"], [3, "Passives"]] # AbilityPage.Kind order
 const PAGE_ICONS := {"scorch_and_burn": "debuff_shadow_burn.png", "cultivate": "buff_focus.png", "ring_of_fire": "buff_magic_orb.png", "quick_step": "buff_speed.png", "sage_arts": "buff_regen_potion.png",
 	"dragons_breath": "buff_energy_burst.png", "firefly": "buff_luck.png", "explosion": "buff_strength.png",
@@ -55,17 +57,17 @@ uniform sampler2D screen: hint_screen_texture, filter_linear_mipmap;
 uniform float amount = 0.5;
 void fragment() {
 	vec3 c = textureLod(screen, SCREEN_UV, amount * 6.0).rgb;
-	COLOR = vec4(mix(c, c * 0.7, amount), 1.0);
+	COLOR = vec4(mix(c, c * 0.12, amount), 1.0);
 }
 """
 
 # Book palette (the spellbook reference): leather, parchment, ink, brass.
-const LEATHER := Color("2b1d14")
+const LEATHER := Color("422724")
 const LEATHER_EDGE := Color("5c3f26")
-const PARCH := Color("dccfab")
+const PARCH := Color("eadaaf")
 const PARCH_DEEP := Color("c9b78e")
 const PLAQUE := Color("e6dbbb")
-const INK := Color("3a2a1b")
+const INK := Color("33291e")
 const INK_SOFT := Color("6e5b42")
 const BRASS := Color("9c7a3c")
 const RED_INK := Color("8a2a1e")
@@ -81,8 +83,10 @@ signal close_requested
 var world: Node3D
 var tab := "grimoire"          # "grimoire" | "player_id"
 var mode := "browse"           # "browse" | "assembly" | "chant"
-var selected := ""             # page id on the right-hand page ("" = page 1, the Table of Contents)
+var selected := ""             # page id on the right-hand page ("" = the unnumbered Table of Contents)
 var toc_query := ""            # the contents' search text
+var toc_kind := -1             # the contents' type filter: -1 all, else AbilityPage.Kind [Sir, 2026-11-14]
+const KIND_FILTERS := [[-1, "All types"], [0, "Attacks"], [1, "Skills"], [2, "Spells"], [3, "Passives"]]
 var toc_list: VBoxContainer    # the contents' rows (rebuilt as the search changes)
 var blur: ColorRect
 var card_side := "front"       # Player ID: "front" | "back"
@@ -96,8 +100,9 @@ var attempts := 0              # attempts drawn (tests)
 var chant_stat := ""           # Spell Chant: the stat being chanted for
 var problem := {}              # the current chant problem (ChantEngine.draw)
 var last_chant := {}           # stat -> key of the previous attempt's problem (never repeated)
-var chant_inputs: Array = []   # LineEdits of the chant view
-var chant_typed: Array = []    # what the player has typed in each blank (kept across rebuilds)
+var chant_slots: Array = []    # the token placed in each blank ("" = empty; kept across rebuilds) [Sir, 2026-11-14: tap, don't type]
+var chant_bad := {}            # tokens a wrong try showed don't belong (greyed, still usable)
+var chant_right := []          # blanks a wrong try showed are right (green)
 var chant_wrong := []
 var chant_started := 0.0       # session time this chant's problem was drawn
 var hint_shown := false
@@ -112,6 +117,133 @@ var serif_bold: Font
 var sans_bold: Font
 var sans_black: Font
 var _icons := {}
+var view: Node                 # ViewMode: the held book opened for the Grimoire tab
+const StageScene = preload("res://scenes/inspection_stage.tscn")
+var printed_controls: Dictionary = {}
+var studio_layer: CanvasLayer
+var stage: Node3D
+var studio: SubViewport
+var ink: SubViewport
+var navigation: Control
+var nav_controls: Array[Control] = []
+
+func on_navigation(point: Vector2) -> bool:
+	for control in nav_controls:
+		if is_instance_valid(control) and control.get_global_rect().has_point(point): return true
+	return false
+
+func _size_view() -> void:
+	var pixels := Vector2i(get_viewport().get_visible_rect().size)
+	ink.size = pixels
+	if studio: studio.size = pixels
+	if panel: panel.position = ((Vector2(pixels)-panel.size)*0.5).floor()
+
+func _studio() -> void:
+	if stage == null:
+		studio_layer = CanvasLayer.new()
+		studio_layer.layer = layer + 1
+		get_parent().add_child(studio_layer)
+		studio = SubViewport.new()
+		studio.transparent_bg = true
+		studio.own_world_3d = true
+		studio.msaa_3d = Viewport.MSAA_2X
+		studio_layer.add_child(studio)
+		stage = StageScene.instantiate()
+		studio.add_child(stage)
+		stage.setup(self,ink)
+		var screen := TextureRect.new()
+		screen.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		screen.texture = studio.get_texture()
+		studio_layer.add_child(screen)
+		screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_size_view()
+	studio_layer.show()
+	stage.wake()
+
+
+# The View (view_mode.gd), made once beside the panel.
+func _view() -> Node:
+	if view == null and world != null:
+		view = ViewMode.new()
+		get_parent().add_child(view)
+		view.setup(self)
+	return view
+
+func _input(event: InputEvent) -> void:
+	if not visible: return
+	var on_book: bool = tab == "grimoire" and view != null
+	var press: bool = (event is InputEventMouseButton or event is InputEventKey) and event.is_pressed()
+	if press and on_book: view.poke() # any press resets the idle clock
+	if event is InputEventKey and event.pressed and not event.echo:
+		if session().input.action_for_event(event) == "grimoire" or (event.keycode == KEY_ESCAPE and not _popup_open()):
+			close_requested.emit() # Tab closes, mid-inspection too (the book goes back to the hand)
+			get_viewport().set_input_as_handled()
+			return
+		if on_book and view.inspecting(): # a key cuts the idle inspection short
+			view.interrupt()
+			get_viewport().set_input_as_handled()
+			return
+		var focus: Control = view.right_vp.gui_get_focus_owner() if on_book else ink.gui_get_focus_owner()
+		if focus is LineEdit or _popup_open():
+			(view.right_vp if on_book else ink).push_input(event, true)
+			get_viewport().set_input_as_handled()
+			return
+		var code: int = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+		if handle_key(code):
+			get_viewport().set_input_as_handled()
+			return
+	if on_book and event is InputEventMouse:
+		if view.inspecting():
+			if event is InputEventMouseButton and event.pressed: # a click cuts it short
+				view.interrupt()
+				get_viewport().set_input_as_handled()
+			return
+		if view.pointer(event):
+			get_viewport().set_input_as_handled()
+			return
+	if not on_book and event is InputEventMouse and stage and stage.pointer(event):
+		get_viewport().set_input_as_handled()
+	elif not on_book and event is InputEventKey and ink.gui_get_focus_owner():
+		ink.push_input(event,true)
+		get_viewport().set_input_as_handled()
+
+## A control by name on the Grimoire's pages (the View's left and right page),
+## else in the panel itself (title, status, Close; the Player ID card). Tests use it.
+func page_control(nm: String) -> Control:
+	if view != null:
+		for v in [view.right_vp, view.left_vp]:
+			var c: Control = (v as Node).find_child(nm, true, false)
+			if c != null: return c
+	return panel.find_child(nm, true, false) as Control
+
+func _popup_open() -> bool:
+	var vps: Array = [ink]
+	if view != null: vps.append(view.right_vp)
+	for v in vps:
+		if (v as Viewport).get_embedded_subwindows().any(func(w: Window): return w.visible): return true
+	return false
+
+func _process(_delta: float) -> void:
+	if visible: navigation.queue_redraw()
+
+func _face() -> Control:
+	return body.find_child("CardFace" if tab == "player_id" else "Book", true, false)
+
+func _stat_feedback(stat: String, ok: bool) -> void:
+	var target: Control = body.find_child("value_"+stat if ok else "ChantBox",true,false)
+	if target == null: return
+	target.pivot_offset = target.size * 0.5
+	target.modulate = Color("#80e9a0") if ok else Color("#ff8780")
+	var t: Tween = target.create_tween().set_parallel(true)
+	t.tween_property(target,"modulate",Color.WHITE,0.72)
+	if ok:
+		target.scale = Vector2.ONE*1.12
+		t.tween_property(target,"scale",Vector2.ONE,0.45).set_trans(Tween.TRANS_SINE)
+	else:
+		target.rotation = -0.025
+		t.tween_property(target,"rotation",0.0,0.38).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+
 
 func setup(main: Node3D) -> void:
 	world = main
@@ -140,7 +272,25 @@ func _ready() -> void:
 	panel = PanelContainer.new()
 	panel.name = "GrimoirePanel"
 	panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
-	add_child(panel)
+	ink = SubViewport.new()
+	ink.name = "PrintedControls"
+	ink.disable_3d = true
+	ink.transparent_bg = true
+	ink.gui_embed_subwindows = true
+	ink.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(ink)
+	ink.add_child(panel)
+	navigation = Control.new()
+	navigation.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(navigation)
+	navigation.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	navigation.draw.connect(func() -> void:
+		for control in nav_controls:
+			if is_instance_valid(control):
+				var region := control.get_global_rect()
+				navigation.draw_texture_rect_region(ink.get_texture(),region,region))
+	get_viewport().size_changed.connect(_size_view)
+	_size_view()
 	body = VBoxContainer.new()
 	body.add_theme_constant_override("separation", 0)
 	panel.add_child(body)
@@ -165,13 +315,20 @@ func open(which := "grimoire") -> void:
 	tab = which if which in VIEWS else "grimoire"
 	mode = "browse"
 	card_side = "front"
-	selected = "" # always opens on page 1, the Table of Contents [Sir]
+	selected = "" # always opens on the unnumbered Table of Contents [Sir]
 	toc_query = ""
 	status_text = ""
 	visible = true
+	toc_kind = -1
+	_view()
 	refresh()
+	_studio()
+	if stage != null: stage.freeze_card(false)
+	if tab == "grimoire" and view != null: view.open() # the held book tucks away; the View's comes up, on the contents [Sir]
 
 func close() -> void:
+	if tab == "player_id" and visible and stage != null: stage.freeze_card(true) # it goes down as it looked
+	if view != null: view.close() # down, then the held book back into the hand
 	visible = false
 	mode = "browse"
 	attempt = {}
@@ -180,21 +337,6 @@ func close() -> void:
 	problem = {}
 	chant_stat = ""
 	reset_armed = false
-
-# Sir R1: a hit while browsing closes the panel; a hit during a page unlock
-# stops and restarts it with a fresh question (nothing is lost). Returns true
-# when the hit was handled by a restart (the panel stays open).
-func on_hit() -> bool:
-	if not visible: return false
-	if mode == "assembly":
-		restart_assembly("Interrupted - a new arrangement.")
-		return true
-	if mode == "chant":
-		_draw_chant()
-		status_text = "Interrupted - a new chant."
-		refresh()
-		return true
-	return false
 
 # ---- Grimoire tab: browse and equip ------------------------------------------------
 
@@ -206,20 +348,30 @@ func select_page(id: String) -> void:
 	status_text = ""
 	refresh()
 
-# The book's pages in order: page 1 the contents, then one per known ability.
+# The book's pages in order: the unnumbered contents, then one per known ability.
 func pages() -> Array:
 	return [""] + grimoire().listed()
 
 func page_number(id: String) -> int:
-	return pages().find(id) + 1
+	return pages().find(id)
 
 # Turn to the next / previous page (wrapping); "" is the contents.
 func flip(step: int) -> void:
 	var l := pages()
 	var i: int = maxi(0, l.find(selected))
 	var to: String = l[(i + step + l.size()) % l.size()]
+	if to == selected: return
+	var from_i: int = page_number(selected)
 	if to == "": show_contents()
 	else: select_page(to)
+	if view != null: view.turn(from_i, page_number(selected), ViewMode.MANUAL_FLIP_S) # one page: 0.5 s [Sir]
+
+func _jump_to(id: String) -> void:
+	var origin: int = page_number(selected)
+	var distance: int = page_number(id)-origin
+	if id == "": show_contents()
+	else: select_page(id)
+	if view != null and distance != 0: view.turn(origin, page_number(id), ViewMode.JUMP_FLIP_S) # however far: 1.0 s [Sir]
 
 func show_contents() -> void:
 	selected = ""
@@ -228,16 +380,29 @@ func show_contents() -> void:
 	status_text = ""
 	refresh()
 
-# The contents' rows that match the search (name or kind, any case).
+# The contents' rows that match the search (name or kind, any case) and the type
+# filter, in page order (ascending) [Sir, 2026-11-14].
 func toc_ids() -> Array:
 	var q := toc_query.strip_edges().to_lower()
-	return grimoire().listed().filter(func(id):
+	var ids: Array = grimoire().listed().filter(func(id):
 		var pg: Resource = grimoire().page(id)
+		if toc_kind >= 0 and int(pg.kind) != toc_kind: return false
 		return q == "" or pg.title.to_lower().contains(q) or pg.kind_name().to_lower().contains(q))
+	ids.sort_custom(func(a, b): return page_number(a) < page_number(b))
+	return ids
+
+func set_kind_filter(kind: int) -> void:
+	toc_kind = kind
+	_refill_toc()
 
 func set_search(text: String) -> void:
 	toc_query = text
-	if toc_list != null and is_instance_valid(toc_list): _fill_toc(toc_list)
+	_refill_toc()
+
+func _refill_toc() -> void:
+	if view != null and view.toc_list != null and is_instance_valid(view.toc_list):
+		ViewPages.fill_toc(view, view.toc_list)
+		toc_list = view.toc_list
 
 # A short line for the contents: the description's first sentence, trimmed.
 static func short_info(pg: Resource) -> String:
@@ -373,6 +538,7 @@ func allocate(stat: String) -> bool:
 	var ok: bool = session().stats.allocate(stat)
 	status_text = ("+1 %s" % STAT_LABELS.get(stat, stat)) if ok else ("No stat points to spend." if session().stats.unspent <= 0 else "%s is at its cap." % STAT_LABELS.get(stat, stat))
 	refresh()
+	if ok: _stat_feedback(stat,true)
 	return ok
 
 # Reset stats [Sir R4]: a first press arms it, the second resets (every stat to
@@ -395,13 +561,16 @@ func chant_level(stat: String) -> int:
 
 # Only with no unspent points [GDD 3.4.4]. Returns the problem ({} = refused).
 func start_chant(stat: String) -> Dictionary:
+	if world.has_method("grimoire_blocked") and world.grimoire_blocked() != "": # Gambling Addiction [Sir, 2026-11-15]
+		if world.has_method("show_notice"): world.show_notice(world.grimoire_blocked(), 1.4)
+		return {}
 	var st: RefCounted = session().stats
 	if st.unspent > 0:
 		status_text = "Spend your stat points first; chanting is for when you have none."
 		refresh()
 		return {}
 	if not st.can_rise(stat): # a capped stat refuses before the chant starts [R9]
-		status_text = "Gambling Addiction: nothing can raise your stats now." if st.buff_block else "That stat cannot rise further."
+		status_text = "That stat cannot rise further."
 		refresh()
 		return {}
 	tab = "player_id"
@@ -417,7 +586,11 @@ func _draw_chant() -> void:
 	problem = ChantEngine.draw(chant_level(chant_stat), session().meta.unlocked, rng, String(last_chant.get(chant_stat, "")))
 	last_chant[chant_stat] = problem.get("key", "")
 	chant_wrong = []
-	chant_typed = []
+	chant_right = []
+	chant_bad = {}
+	problem["choices"] = ChantEngine.choices(problem, session().meta.unlocked, rng) if not problem.is_empty() else []
+	chant_slots = []
+	for i in problem.get("answers", []).size(): chant_slots.append("")
 	chant_started = session().run.time # a fresh problem: the hint waits again
 	hint_shown = false
 	hint_was_ready = false
@@ -475,10 +648,109 @@ func submit_chant(answers: Array) -> Dictionary:
 	else:
 		session().progression.on_chant_fail()
 		chant_wrong = res.wrong
+		chant_right = []
+		for i in problem.answers.size():
+			if not i in res.wrong: chant_right.append(i)
+			elif i < answers.size() and String(answers[i]) != "" and not String(answers[i]) in problem.answers: chant_bad[String(answers[i])] = true
 		status_text = "Arcane fizzle: %d blank(s) wrong. Try again or cancel." % res.wrong.size()
 		if world.get("sfx") and world.sfx: world.sfx.play("click", world.player.global_position)
 	refresh()
+	_stat_feedback(chant_stat,res.ok)
 	return res
+
+# ---- tapping tokens into the blanks [Sir, 2026-11-14] ----------------------------------------------
+# A choice fills the first empty blank; tapping a filled blank empties it. The
+# code above shows each placed token in its blank. Chant is enabled once every
+# blank holds a token. A wrong try turns the right blanks green and the wrong
+# ones red, and greys the tokens that belong nowhere (they stay usable).
+func choose(token: String) -> int:
+	if mode != "chant" or problem.is_empty(): return -1
+	var i := chant_slots.find("")
+	if i < 0: return -1
+	chant_slots[i] = token
+	chant_wrong.erase(i)
+	chant_right.erase(i)
+	refresh()
+	return i
+
+func clear_slot(i: int) -> void:
+	if i < 0 or i >= chant_slots.size(): return
+	chant_slots[i] = ""
+	chant_wrong.erase(i)
+	chant_right.erase(i)
+	refresh()
+
+func slots_full() -> bool:
+	return not chant_slots.is_empty() and not chant_slots.has("")
+
+func submit_slots() -> Dictionary:
+	if not slots_full(): return {"ok": false, "wrong": []}
+	return submit_chant(chant_slots.duplicate())
+
+# The problem's lines with each placed token shown in its blank: [?1] -> [cout].
+func slot_lines() -> Array:
+	var out: Array = []
+	for l in problem.get("lines", []):
+		var t := String(l)
+		for i in chant_slots.size():
+			if String(chant_slots[i]) != "": t = t.replace("[?%d]" % (i + 1), "[%s]" % chant_slots[i])
+		out.append(t)
+	return out
+
+func _chant_slots_row(col: VBoxContainer) -> void:
+	var cc := CenterContainer.new()
+	col.add_child(cc)
+	var row := HBoxContainer.new()
+	row.name = "ChantSlots"
+	row.add_theme_constant_override("separation", 12)
+	cc.add_child(row)
+	for i in chant_slots.size():
+		var tok := String(chant_slots[i])
+		var b := Button.new()
+		b.name = "slot_%d" % (i + 1)
+		b.text = ("%d: %s" % [i + 1, tok]) if tok != "" else ("%d: ____" % (i + 1))
+		b.custom_minimum_size = Vector2(170, 56)
+		b.add_theme_font_override("font", mono)
+		b.add_theme_font_size_override("font_size", 24)
+		var fill := Color("fbfaf6")
+		var edge := CARD_INK
+		if i in chant_wrong:
+			fill = Color("f6d6d0")
+			edge = MAROON
+		elif i in chant_right:
+			fill = Color("d4efd2")
+			edge = Color("2f7a35")
+		for st in ["normal", "hover", "pressed", "focus"]: b.add_theme_stylebox_override(st, _box(fill, edge, 2, 4, 8))
+		for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]: b.add_theme_color_override(fc, CARD_INK)
+		b.tooltip_text = "Tap to empty this blank"
+		b.pressed.connect(clear_slot.bind(i))
+		row.add_child(b)
+
+func _chant_choices(col: VBoxContainer) -> void:
+	var cc := CenterContainer.new()
+	col.add_child(cc)
+	var grid := GridContainer.new()
+	grid.name = "ChantChoices"
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	cc.add_child(grid)
+	for tok in problem.get("choices", []):
+		var b := Button.new()
+		b.name = "choice_" + String(tok).validate_node_name()
+		b.text = String(tok)
+		b.custom_minimum_size = Vector2(150, 52)
+		b.add_theme_font_override("font", mono)
+		b.add_theme_font_size_override("font_size", 24)
+		var bad: bool = chant_bad.has(String(tok))
+		var fill := Color("cfcabd") if bad else Color("efe6cc")
+		for st in ["normal", "focus"]: b.add_theme_stylebox_override(st, _box(fill, CARD_INK, 2, 4, 8))
+		b.add_theme_stylebox_override("hover", _box(Color("f7efd6"), BRASS, 2, 4, 8))
+		b.add_theme_stylebox_override("pressed", _box(Color("f7efd6"), BRASS, 3, 4, 8))
+		for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]: b.add_theme_color_override(fc, Color("6b665c") if bad else CARD_INK)
+		b.disabled = slots_full()
+		b.pressed.connect(func() -> void: choose(String(tok)))
+		grid.add_child(b)
 
 func cancel_chant() -> void:
 	mode = "browse"
@@ -487,9 +759,19 @@ func cancel_chant() -> void:
 
 func show_tab(which: String) -> void:
 	if not which in VIEWS: return # the Effects list is its own overlay on T [Sir]
-	if which != tab: status_text = ""
+	var switching: bool = which != tab
+	if switching:
+		status_text = ""
+		if which == "grimoire": selected = ""
 	tab = which
 	if which == "player_id" and mode == "assembly": mode = "browse"
+	# Grimoire <-> Player ID [Sir, 2026-11-20]: the outgoing one goes down to the
+	# bottom middle, then the other comes up from there. The card keeps its own
+	# look while it goes (the ink is about to draw the Grimoire: the black card).
+	if switching and visible and stage != null: stage.freeze_card(which != "player_id")
+	if switching and view != null and visible:
+		if which == "grimoire": view.from_card()
+		else: view.to_card()
 	if mode == "chant": # the chant carries on: back on the card it is waiting
 		card_side = "back"
 		status_text = "Spell Chant in progress: press D for the Player ID to finish it." if which == "grimoire" else "Fill in the blanks."
@@ -752,7 +1034,7 @@ func _label(parent: Control, text: String, size: int) -> Label:
 func _button(parent: Control, text: String, flat := false) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.add_theme_font_override("font", serif_bold)
+	b.add_theme_font_override("font", sans_bold)
 	b.add_theme_font_size_override("font_size", 15)
 	b.add_theme_color_override("font_color", INK)
 	b.add_theme_color_override("font_hover_color", RED_INK)
@@ -792,16 +1074,9 @@ func _ornament(parent: Control, w: float, color := INK_SOFT) -> Control:
 	parent.add_child(c)
 	return c
 
-# A header plaque: the title in a framed parchment box, flourishes each side.
-func _plaque(parent: Control, title: String, w := 300.0) -> void:
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 8)
-	parent.add_child(row)
-	_text(row, "~", 20, INK_SOFT, serif_bold)
-	var p := _panel(row, _box(PLAQUE, INK_SOFT, 1, 2, 4), Vector2(w, 0))
-	_text(p, title, 20, INK, serif_bold, HORIZONTAL_ALIGNMENT_CENTER)
-	_text(row, "~", 20, INK_SOFT, serif_bold)
+# Display titles use the held folio's serif; small controls use its sans face.
+func _plaque(parent: Control, title: String, _w := 300.0) -> void:
+	_text(parent, title, 32, INK, serif_bold, HORIZONTAL_ALIGNMENT_CENTER)
 
 # An icon in a dark frame (like the spellbook's spell tiles).
 func _icon_tile(parent: Control, tex: Texture2D, px: float, dim := false, frame := INK) -> Control:
@@ -822,7 +1097,7 @@ func _icon_tile(parent: Control, tex: Texture2D, px: float, dim := false, frame 
 
 func refresh() -> void:
 	if body == null: return
-	if blur != null: blur.visible = visible
+	if blur != null: blur.visible = visible and tab != "grimoire" # the View blurs and darkens behind the book
 	for ch in body.get_children(): # out of the layout now (queue_free alone keeps them until the frame ends, doubling the height)
 		body.remove_child(ch)
 		ch.queue_free()
@@ -832,8 +1107,25 @@ func refresh() -> void:
 	st.name = "Status" # under the title: clear of the HUD's action bar
 	st.custom_minimum_size.y = 24
 	if tab == "player_id": _card()
+	elif view != null:
+		view.rebuild() # the book's pages: view_pages.gd on the 3D book
+		toc_list = view.toc_list if is_instance_valid(view.toc_list) else null
+		var space := Control.new() # the 3D book's place: the title sits above it, Close below [Sir, 2026-11-20]
+		space.name = "BookSpace"
+		space.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		space.custom_minimum_size = Vector2(WIDTH, maxf(0.0, get_viewport().get_visible_rect().size.y - 120.0))
+		body.add_child(space)
 	else: _book()
 	_close_row()
+	printed_controls.clear()
+	for key in ["LeftPaper","RightPaper","CardFace","MiniFace"]:
+		printed_controls[key] = body.find_child(key,true,false)
+	nav_controls.clear()
+	for name_in_view in ["Switcher","Status","FlipCard","CloseRow"]:
+		var control: Control = body.find_child(name_in_view,true,false)
+		if control: nav_controls.append(control)
+	navigation.queue_redraw()
+	navigation.queue_redraw.call_deferred()
 	_hint_secs = -1
 	panel.reset_size()
 	if panel.is_inside_tree():
@@ -879,23 +1171,28 @@ func _book() -> void:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
 	leather.add_child(col)
-	var top := HBoxContainer.new()
-	col.add_child(top)
-	var toc := _button(top, "<<  Table of Contents")
-	toc.name = "ToContents"
-	toc.disabled = selected == ""
-	toc.pressed.connect(show_contents)
 	var spread := HBoxContainer.new()
 	spread.add_theme_constant_override("separation", 14)
 	col.add_child(spread)
-	_loadout_page(_parchment_page(spread))
+	var left := _parchment_page(spread)
+	left.get_parent().name = "LeftPaper"
+	_loadout_page(left)
+	var top := HBoxContainer.new()
+	left.add_child(top)
+	var toc := _button(top, "<<  Table of Contents")
+	toc.name = "ToContents"
+	toc.disabled = selected == ""
+	toc.pressed.connect(_jump_to.bind(""))
 	var right := _parchment_page(spread)
+	right.get_parent().name = "RightPaper"
 	if selected == "": _contents_page(right)
 	else: _right_page(right)
 
 func _parchment_page(parent: Control) -> VBoxContainer:
 	var page := _panel(parent, _box(PARCH, PARCH_DEEP, 2, 4, 24), Vector2(PAGE_W, PAGE_H))
 	page.clip_contents = true
+	page.draw.connect(func() -> void:
+		page.draw_rect(Rect2(Vector2(9,9),page.size-Vector2(18,18)),BRASS,false,1.0))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 10)
 	page.add_child(col)
@@ -906,20 +1203,16 @@ func _loadout_page(col: VBoxContainer) -> void:
 	_plaque(col, "Loadout", 240)
 	var hint := "Click a slot to equip the open page." if selected != "" else "Open an ability's page, then click a slot to equip it."
 	_text(col, hint, 15, INK_SOFT, serif, HORIZONTAL_ALIGNMENT_CENTER, PAGE_W - 60)
-	_gap(col, 6)
-	for r in LOADOUT_ROWS: # numeral, name and slots on one line
-		var head := HBoxContainer.new()
-		head.add_theme_constant_override("separation", 14)
-		col.add_child(head)
-		var num := _panel(head, _box(PLAQUE, INK_SOFT, 1, 22, 0), Vector2(44, 44))
-		num.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		var nl := _text(num, r[0], 17, INK, serif_bold, HORIZONTAL_ALIGNMENT_CENTER)
-		nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		var lab := _text(head, r[1], 20, INK, serif_bold)
-		lab.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		lab.custom_minimum_size.x = 110
-		for slot in r[2]: _slot_circle(head, slot)
-		_ornament(col, PAGE_W - 80)
+	_gap(col, 18)
+	for section in LOADOUT_ROWS:
+		_ornament(col, PAGE_W - 80, BRASS)
+		_text(col, "%s   %s" % [section[0],section[1]],25,INK,serif_bold,HORIZONTAL_ALIGNMENT_CENTER)
+		var slots := HBoxContainer.new()
+		slots.alignment = BoxContainer.ALIGNMENT_CENTER
+		slots.add_theme_constant_override("separation",14)
+		col.add_child(slots)
+		for slot in section[2]: _slot_circle(slots, slot)
+		_gap(col, 12)
 
 # One loadout slot: a circle with the page's icon, its key and name; an x empties it.
 func _slot_circle(parent: Control, slot: String) -> void:
@@ -929,10 +1222,10 @@ func _slot_circle(parent: Control, slot: String) -> void:
 	parent.add_child(col)
 	var b := Button.new()
 	b.name = "slot_" + slot
-	b.custom_minimum_size = Vector2(68, 68)
+	b.custom_minimum_size = Vector2(86, 86)
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	b.tooltip_text = SLOT_LABELS[slot] + (": " + pg.title if pg else ": empty")
-	var ring := _box(Color("e9dfc2") if pg == null else Color("1e1610"), INK_SOFT if pg == null else BRASS, 2, 34, 0)
+	var ring := _box(Color("e9dfc2") if pg == null else Color("1e1610"), INK_SOFT if pg == null else BRASS, 2, 43, 0)
 	var hov: StyleBoxFlat = ring.duplicate(); hov.border_color = RED_INK
 	b.add_theme_stylebox_override("normal", ring)
 	b.add_theme_stylebox_override("hover", hov)
@@ -945,8 +1238,8 @@ func _slot_circle(parent: Control, slot: String) -> void:
 		tr.texture = page_icon(String(pg.id))
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tr.size = Vector2(54, 54)
-		tr.position = Vector2(7, 7)
+		tr.size = Vector2(68, 68)
+		tr.position = Vector2(9, 9)
 		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		b.add_child(tr)
 	var foot := HBoxContainer.new()
@@ -963,10 +1256,11 @@ func _slot_circle(parent: Control, slot: String) -> void:
 		u.add_theme_font_size_override("font_size", 14)
 		u.pressed.connect(unequip.bind(slot))
 		foot.add_child(u)
-	var nm := _text(col, pg.title if pg else "empty", 13, INK if pg else Color(INK_SOFT, 0.7), serif, HORIZONTAL_ALIGNMENT_CENTER)
-	nm.custom_minimum_size.x = 110
+	var nm := _text(col, pg.title if pg else "empty", 17, INK if pg else Color(INK_SOFT, 0.7), serif, HORIZONTAL_ALIGNMENT_CENTER)
+	nm.custom_minimum_size.x = 138
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-# Page 1 [Sir]: the Table of Contents, a search bar, then one row per ability.
+# Opening spread: the Table of Contents, a search bar, then one row per ability.
 func _contents_page(col: VBoxContainer) -> void:
 	_plaque(col, "Table of Contents", 300)
 	var search := LineEdit.new()
@@ -980,7 +1274,30 @@ func _contents_page(col: VBoxContainer) -> void:
 	search.add_theme_stylebox_override("normal", _box(Color("efe6cc"), INK_SOFT, 1, 3, 8))
 	search.add_theme_stylebox_override("focus", _box(Color("f3ebd3"), BRASS, 2, 3, 8))
 	search.text_changed.connect(set_search)
-	col.add_child(search)
+	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var bar := HBoxContainer.new() # the search box with the type filter beside it [Sir, 2026-11-14]
+	bar.name = "SearchBar"
+	bar.add_theme_constant_override("separation", 8)
+	col.add_child(bar)
+	bar.add_child(search)
+	var kf := OptionButton.new()
+	kf.name = "TypeFilter"
+	kf.tooltip_text = "Show one type of ability"
+	for f in KIND_FILTERS: kf.add_item(String(f[1]), int(f[0]) + 1)
+	kf.select(toc_kind + 1)
+	kf.add_theme_font_override("font", serif)
+	kf.add_theme_font_size_override("font_size", 16)
+	kf.add_theme_color_override("font_color", INK)
+	kf.add_theme_color_override("font_hover_color", INK)
+	kf.add_theme_color_override("font_pressed_color", INK)
+	kf.add_theme_color_override("font_focus_color", INK)
+	kf.add_theme_stylebox_override("normal", _box(Color("efe6cc"), INK_SOFT, 1, 3, 8))
+	kf.add_theme_stylebox_override("hover", _box(Color("f3ebd3"), BRASS, 1, 3, 8))
+	kf.add_theme_stylebox_override("pressed", _box(Color("f3ebd3"), BRASS, 2, 3, 8))
+	kf.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	kf.custom_minimum_size = Vector2(150, 0)
+	kf.item_selected.connect(func(i: int) -> void: set_kind_filter(int(KIND_FILTERS[i][0])))
+	bar.add_child(kf)
 	var scroll := ScrollContainer.new()
 	scroll.name = "ContentsScroll"
 	scroll.custom_minimum_size = Vector2(PAGE_W - 48, PAGE_H - 210)
@@ -995,10 +1312,12 @@ func _contents_page(col: VBoxContainer) -> void:
 	_fill_toc(list)
 	var foot := HBoxContainer.new()
 	col.add_child(foot)
+	var prev := _button(foot, "<  Previous page", true)
+	prev.name = "PrevPage"
+	prev.pressed.connect(flip.bind(-1))
 	var fill := Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	foot.add_child(fill)
-	_text(foot, "Page 1", 14, INK_SOFT, serif)
 	var nxt := _button(foot, "Next page  >", true)
 	nxt.name = "NextPage"
 	nxt.pressed.connect(flip.bind(1))
@@ -1011,10 +1330,9 @@ func _fill_toc(list: VBoxContainer) -> void:
 	if ids.is_empty():
 		_text(list, "No pages found." if grimoire().listed().size() > 0 else "No pages yet. Pages lie hidden in the forest.", 16, INK_SOFT, serif, HORIZONTAL_ALIGNMENT_CENTER, PAGE_W - 80)
 		return
-	for sec in KIND_SECTIONS: # one column, grouped attacks -> skills -> spells -> passives
+	for sec in [0]: # one column in page order (ascending) [Sir, 2026-11-14]
 		for id in ids:
 			var pg: Resource = grimoire().page(id)
-			if int(pg.kind) != sec[0]: continue
 			var open: bool = grimoire().is_unlocked(id)
 			var b := Button.new()
 			b.name = "toc_" + id
@@ -1023,7 +1341,7 @@ func _fill_toc(list: VBoxContainer) -> void:
 			b.add_theme_stylebox_override("hover", _box(Color(1, 1, 1, 0.24), BRASS, 1, 3, 0))
 			b.add_theme_stylebox_override("pressed", _box(Color(1, 1, 1, 0.3), BRASS, 2, 3, 0))
 			b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-			b.pressed.connect(select_page.bind(id))
+			b.pressed.connect(_jump_to.bind(id))
 			list.add_child(b)
 			var row := HBoxContainer.new()
 			row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1064,7 +1382,7 @@ func _lock_badge(tile: Control) -> void:
 		var c := Vector2(28, 32)
 		lock.draw_arc(c + Vector2(0, -8), 8, PI, TAU, 12, Color("e6dbbb"), 3.0, true)
 		lock.draw_rect(Rect2(c + Vector2(-11, -6), Vector2(22, 17)), Color("e6dbbb"))
-		lock.draw_circle(c + Vector2(0, 2), 2.5, Color("3a2a1b")))
+		lock.draw_circle(c + Vector2(0, 2), 2.5, Color("33291e")))
 	tile.add_child(lock)
 
 # An ability's own page.
@@ -1082,7 +1400,7 @@ func _right_page(col: VBoxContainer) -> void:
 	var rank_ok: bool = pg.rank_ok(session().progression.rank)
 	_text(meta_col, pg.kind_name(), 19, INK, serif_bold)
 	_text(meta_col, "Rank %s%s" % [pg.rank_req, "" if rank_ok else "  (yours: %s)" % session().progression.rank], 16, INK if rank_ok else RED_INK, serif)
-	_text(meta_col, "Page %d of %d" % [page_number(selected), pages().size()], 15, INK_SOFT, serif)
+	_text(meta_col, "Page %d of %d" % [page_number(selected), pages().size()-1], 15, INK_SOFT, serif)
 	_ornament(col, PAGE_W - 60)
 	if not open:
 		if mode == "assembly" and not attempt.is_empty(): _assembly_view(col)
@@ -1181,7 +1499,27 @@ func _card() -> void:
 	body.add_child(wrap)
 	var center := CenterContainer.new()
 	wrap.add_child(center)
-	var card := _panel(center, _box(CARD_WHITE, Color("c9c6bd"), 1, 22, 0), CARD)
+	var pair := HBoxContainer.new()
+	pair.alignment = BoxContainer.ALIGNMENT_CENTER
+	pair.add_theme_constant_override("separation",72)
+	center.add_child(pair)
+	if mode == "chant" and not problem.is_empty():
+		var miniature := Control.new()
+		miniature.custom_minimum_size = Vector2(CARD.x*0.52,CARD.y)
+		pair.add_child(miniature)
+		var small := _panel(miniature,_box(CARD_WHITE,Color("c9c6bd"),1,22,0),CARD)
+		small.name = "MiniFace"
+		small.scale = Vector2.ONE*0.52
+		small.position.y = CARD.y*0.24
+		small.mouse_behavior_recursive = Control.MOUSE_BEHAVIOR_DISABLED
+		small.focus_behavior_recursive = Control.FOCUS_BEHAVIOR_DISABLED
+		var summary := VBoxContainer.new()
+		small.add_child(summary)
+		_card_front(summary)
+	var holder := Control.new()
+	holder.custom_minimum_size = CARD
+	pair.add_child(holder)
+	var card := _panel(holder, _box(CARD_WHITE, Color("c9c6bd"), 1, 22, 0), CARD)
 	card.name = "CardFace"
 	card.clip_contents = true
 	var col := VBoxContainer.new()
@@ -1380,7 +1718,8 @@ func _card_chant(col: VBoxContainer) -> void:
 	box.add_theme_stylebox_override("panel", _box(Color("fbfaf6"), CARD_INK, 2, 6, 0))
 	cc.add_child(box)
 	var code := ""
-	for i in problem.lines.size(): code += ("%02d  %s" % [i + 1, problem.lines[i]]) + ("\n" if i < problem.lines.size() - 1 else "")
+	var shown: Array = slot_lines()
+	for i in shown.size(): code += ("%02d  %s" % [i + 1, shown[i]]) + ("\n" if i < shown.size() - 1 else "")
 	var inner := box_size - Vector2(28, 24)
 	# The question scrolls inside the box [Sir]: the font fits it where it can
 	# (down to CHANT_MIN_FONT), and anything longer scrolls instead of shrinking further.
@@ -1401,41 +1740,32 @@ func _card_chant(col: VBoxContainer) -> void:
 	cl.custom_minimum_size.x = inner.x - 14 # room for the scroll bar
 	scroll.add_child(cl)
 	_gap(col, 22)
-	_pill(col, "FILL IN THE BLANKS", 22)
-	_gap(col, 16)
-	chant_inputs = []
-	var ic := CenterContainer.new()
-	col.add_child(ic)
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 10)
-	ic.add_child(grid)
-	for i in problem.answers.size():
-		_text(grid, "[?%d]" % (i + 1), 26, CARD_INK, mono)
-		var e := LineEdit.new()
-		e.name = "blank_%d" % (i + 1)
-		e.placeholder_text = "syntax"
-		e.custom_minimum_size = Vector2(340, 56)
-		e.add_theme_font_override("font", mono)
-		e.add_theme_font_size_override("font_size", 24)
-		if i in chant_wrong: e.add_theme_stylebox_override("normal", _box(Color("f6d6d0"), MAROON, 2, 3, 8))
-		if i < chant_typed.size(): e.text = chant_typed[i] # kept across a visit to the Grimoire
-		var idx: int = i
-		e.text_changed.connect(func(t: String) -> void:
-			while chant_typed.size() <= idx: chant_typed.append("")
-			chant_typed[idx] = t)
-		grid.add_child(e)
-		chant_inputs.append(e)
-	_gap(col, 24)
+	_pill(col, "TAP THE SYNTAX INTO THE BLANKS", 22)
+	_gap(col, 14)
+	_chant_slots_row(col)
+	_gap(col, 14)
+	_chant_choices(col)
+	_gap(col, 20)
 	var act := HBoxContainer.new()
 	act.alignment = BoxContainer.ALIGNMENT_CENTER
 	act.add_theme_constant_override("separation", 16)
 	col.add_child(act)
-	for bdef in [["Chant", func() -> void: submit_chant(chant_inputs.map(func(e): return e.text))], ["Cancel", cancel_chant]]:
-		var bb := _button(act, bdef[0])
-		bb.add_theme_font_size_override("font_size", 24)
-		bb.pressed.connect(bdef[1])
+	var go := _button(act, "Chant")
+	go.name = "ChantGo"
+	go.add_theme_font_size_override("font_size", 24)
+	go.disabled = not slots_full()
+	go.pressed.connect(submit_slots)
+	if not chant_wrong.is_empty():
+		var retry := _button(act,"Retry")
+		retry.name = "ChantRetry"
+		retry.pressed.connect(func() -> void:
+			for i in chant_wrong: chant_slots[i] = ""
+			chant_wrong.clear()
+			status_text = "Replace the missing tokens."
+			refresh())
+	var cb := _button(act, "Cancel")
+	cb.add_theme_font_size_override("font_size", 24)
+	cb.pressed.connect(cancel_chant)
 	var hb := _button(act, "Hint" if hint_ready() else "Hint (in %d s)" % ceili(hint_left()))
 	hb.name = "Hint"
 	hb.add_theme_font_size_override("font_size", 24)
@@ -1448,10 +1778,10 @@ func _card_chant(col: VBoxContainer) -> void:
 	ht.name = "HintText" if hint_shown else "HintWait"
 	ht.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-# The chant's code box: a fixed size for the card [Sir], taller when there is
-# one blank (the second input row's space goes to the code).
+# The chant's code box: one fixed size for the card [Sir] (the blanks sit in a
+# single row and the 6 choices in two, whatever the number of blanks).
 func chant_box_size() -> Vector2:
-	return Vector2(CARD.x - 40, 236.0 + maxi(0, 2 - int(problem.get("blanks", 1))) * 66.0)
+	return Vector2(CARD.x - 40, 214.0)
 
 const CHANT_MIN_FONT := 15     # below this the question scrolls rather than shrinks
 # The largest code font (24 down to CHANT_MIN_FONT) whose word-wrapped text

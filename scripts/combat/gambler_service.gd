@@ -196,6 +196,7 @@ func _start_addiction(now: float) -> void:
 	stats().add_modifier(ADDICTION_ID, "magic_pow", 1.0, 0.0, INF, float(LET.addict_pow))
 	stats().add_modifier(ADDICTION_ID, "mov_spd", float(LET.addict_mov), 0.0, INF)
 	_block(true)
+	if world.has_method("close_grimoire"): world.close_grimoire() # it stays shut while Addiction lasts
 
 func _block(on: bool) -> void:
 	if world == null or world.session == null: return

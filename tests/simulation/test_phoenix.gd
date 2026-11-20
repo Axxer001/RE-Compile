@@ -26,6 +26,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var s = c.session
 	var tree: SceneTree = c.get_tree()
 	s.meta.reset()
+	for id in ["flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix"]: s.meta.unlock(id) # Explicit fixture grants, never production starters.
 	s.restart()
 	await tree.physics_frame
 	c.park_enemies()
@@ -42,17 +43,17 @@ static func run(check: Callable, c: Node3D) -> void:
 	reset_player.call()
 	steps(c, 0.2)
 	var pages := ["flight_of_the_phoenix", "call_of_the_phoenix", "rise_of_the_phoenix"]
-	check.call(pages.all(func(id): return s.grimoire.is_unlocked(id)) and s.grimoire.page("rise_of_the_phoenix").kind == 3, "the Phoenix pages are unlocked from the start; Rise is a passive")
+	check.call(pages.all(func(id): return s.grimoire.is_unlocked(id)) and s.grimoire.page("rise_of_the_phoenix").kind == 3, "the Phoenix pages are unlocked by the test fixture; Rise is a passive")
 
 	# ---- Flight of the Phoenix ---------------------------------------------------------------------
 	var fl: Resource = s.grimoire.page("flight_of_the_phoenix")
-	pc.equip("spell_1", fl)
+	pc.equip("spell_4", fl)
 	p.global_position = home + Vector3(0, 3, 0) # in the air
 	p.velocity = Vector3.ZERO
 	steps(c, 2.0 * DT) # the controller notices it has left the floor
 	var mp_air: float = pc.mp
-	var r_air: String = pc.use_slot("spell_1", Vector2.ZERO, s.run.time)
-	check.call(r_air == "airborne" and is_equal_approx(pc.mp, mp_air) and pc.remaining("spell_1", s.run.time) == 0.0, "Flight cannot be cast in the air: refused, nothing spent")
+	var r_air: String = pc.use_slot("spell_4", Vector2.ZERO, s.run.time)
+	check.call(r_air == "airborne" and is_equal_approx(pc.mp, mp_air) and pc.remaining("spell_4", s.run.time) == 0.0, "Flight cannot be cast in the air: refused, nothing spent")
 	reset_player.call()
 	steps(c, 0.5)
 	var near_a := put(c, ids[0], home + Vector3(12, 0, 0))
@@ -62,19 +63,19 @@ static func run(check: Callable, c: Node3D) -> void:
 	await tree.physics_frame
 	var hp_a: float = near_a.health.hp
 	var mp0: float = pc.mp
-	var r: String = pc.use_slot("spell_1", Vector2.ZERO, s.run.time)
+	var r: String = pc.use_slot("spell_4", Vector2.ZERO, s.run.time)
 	var cast_at: Vector3 = c.spells.flight.cast_at
 	var pulled: bool = near_a.global_position.distance_to(cast_at) < 2.5 and near_b.global_position.distance_to(cast_at) < 2.5 and far.global_position.distance_to(far_at) < 0.01
 	var concussed: bool = c.effects.has(near_a.enemy_id, SS.CONCUSS_ID, s.run.time) and not c.effects.has(far.enemy_id, SS.CONCUSS_ID, s.run.time)
 	check.call(r == "ok" and is_equal_approx(pc.mp, mp0 - 80.0) and pulled and concussed and is_equal_approx(near_a.health.hp, hp_a) and c.spells.flight.has("ring"), "Flight: 80 MP; enemies within 20 m are pulled to the cast spot unhurt and Concussed; the one at 25 m stays; the 50 m landing ring shows")
-	var cd: float = pc.remaining("spell_1", s.run.time)
+	var cd: float = pc.remaining("spell_4", s.run.time)
 	check.call(absf(cd - s.stats.cooldown(60.0, true, s.run.time)) < 0.05, "a 1 min cooldown (x Spell Mastery): %.1f s" % cd)
 	steps(c, 0.1)
 	check.call(is_equal_approx(near_a.atk_mult, 0.2) and near_a.speed_mult <= 0.2 + 1e-6, "Concussed: -80% move and attack speed")
 	steps(c, 2.4)
 	var y_climb: float = p.global_position.y - cast_at.y
 	var hit_r: String = p.health.apply(DamagePacket.new(980001, "sprite_x", "infected", 50.0, "bite"), s.run.time)
-	var gated: bool = pc.use_slot("skill_1", Vector2.ZERO, s.run.time) == "busy" and not pc.can_cast() and not pc.sage_active(s.run.time)
+	var gated: bool = pc.use_slot("spell_2", Vector2.ZERO, s.run.time) == "busy" and not pc.can_cast() and not pc.sage_active(s.run.time)
 	check.call(absf(y_climb - 30.0 * 0.75) < 1.0 and hit_r == "immune" and gated, "climbing: %.1f m up at 2.5 s (of 30 m over 5 s); invulnerable; no other attack, skill or passive" % y_climb)
 	check.call(is_equal_approx(SS.flight_mult(1.0), 1.0) and is_equal_approx(SS.flight_mult(2.0), 1.0) and is_equal_approx(SS.flight_mult(3.5), 3.0) and is_equal_approx(SS.flight_mult(5.0), 5.0) and is_equal_approx(SS.flight_mult(8.0), 5.0), "damage curve: 100% to 2 s, then linear to 500% at 5 s")
 	# A spot in the sky is refused.
@@ -104,9 +105,9 @@ static func run(check: Callable, c: Node3D) -> void:
 	c.park_enemies()
 	reset_player.call()
 	steps(c, 0.3)
-	pc.ready_at.erase("spell_1")
+	pc.ready_at.erase("spell_4")
 	pc.mp = pc.max_mp(s.run.time)
-	pc.use_slot("spell_1", Vector2.ZERO, s.run.time)
+	pc.use_slot("spell_4", Vector2.ZERO, s.run.time)
 	var spot0: Vector3 = c.spells.flight.cast_at
 	steps(c, 5.2)
 	var hovering: bool = c.spells.flight_phase() == "window" and absf(p.global_position.y - spot0.y - 30.0) < 0.2
@@ -121,10 +122,10 @@ static func run(check: Callable, c: Node3D) -> void:
 	reset_player.call()
 	steps(c, 0.3)
 	var cl: Resource = s.grimoire.page("call_of_the_phoenix")
-	pc.equip("spell_2", cl)
+	pc.equip("spell_3", cl)
 	pc.mp = pc.max_mp(s.run.time)
 	var mp1: float = pc.mp
-	pc.use_slot("spell_2", Vector2.ZERO, s.run.time)
+	pc.use_slot("spell_3", Vector2.ZERO, s.run.time)
 	var keys := {KEY_W: true}
 	var saved: Callable = s.input.key_source
 	s.input.key_source = func(k: int) -> bool: return keys.get(k, false)
@@ -132,10 +133,10 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.input.key_source = saved
 	var held: bool = p.global_position.distance_to(home) < 0.05 and c.spells.busy() == "call"
 	steps(c, 3.2)
-	check.call(held and c.spells.calling.is_empty() and c.spells.rain.is_empty() and is_equal_approx(pc.mp, mp1 - 50.0) and pc.remaining("spell_2", s.run.time) > 0.0, "Call: held in place for 5 s; with no marks it ends without rain, MP and cooldown still spent")
-	pc.ready_at.erase("spell_2")
+	check.call(held and c.spells.calling.is_empty() and c.spells.rain.is_empty() and is_equal_approx(pc.mp, mp1 - 50.0) and pc.remaining("spell_3", s.run.time) > 0.0, "Call: held in place for 5 s; with no marks it ends without rain, MP and cooldown still spent")
+	pc.ready_at.erase("spell_3")
 	pc.mp = pc.max_mp(s.run.time)
-	pc.use_slot("spell_2", Vector2.ZERO, s.run.time)
+	pc.use_slot("spell_3", Vector2.ZERO, s.run.time)
 	p.pitch = deg_to_rad(60.0)
 	p.apply_look()
 	var bad_mark: bool = not c.spells.mark_call_area(s.run.time)

@@ -13,13 +13,13 @@ static func near(a: float, b: float) -> bool:
 static func run(check: Callable, _c = null) -> void:
 	# --- Stats -----------------------------------------------------------------
 	var s := Stats.new()
-	check.call(s.value("max_hp") == 100.0 and s.value("max_mp") == 100.0 and s.value("magic_pow") == 100.0
-		and s.value("mov_spd") == 10.0 and s.value("atk_spd") == 5.0 and s.value("spell_mastery") == 0.0, "beginner stats match GDD §3.2")
+	check.call(s.value("max_hp") == 1000.0 and s.value("max_mp") == 100.0 and s.value("magic_pow") == 1000.0
+		and s.value("mov_spd") == 10.0 and s.value("atk_spd") == 5.0 and s.value("spell_mastery") == 0.0, "beginner stats: HP and Pow 1000 (x10 rescale [Sir, 2026-11-15]), MP 100, the rest per GDD §3.2")
 	check.call(not s.allocate("max_hp"), "allocate needs an unspent point")
 	s.unspent = 6
 	for stat in Stats.STATS: s.allocate(stat)
-	check.call(near(s.value("max_hp"), 105) and near(s.value("max_mp"), 105) and near(s.value("magic_pow"), 105)
-		and near(s.value("mov_spd"), 10.25) and near(s.value("atk_spd"), 5.2) and near(s.value("spell_mastery"), 0.015), "one point per stat: flat +5 HP/MP/Pow [Sir R3], Tech Spec §1.1 for the rest")
+	check.call(near(s.value("max_hp"), 1050) and near(s.value("max_mp"), 105) and near(s.value("magic_pow"), 1050)
+		and near(s.value("mov_spd"), 10.25) and near(s.value("atk_spd"), 5.2) and near(s.value("spell_mastery"), 0.015), "one point per stat: +50 HP/Pow, +5 MP [Sir R3, x10 rescale], Tech Spec §1.1 for the rest")
 	check.call(s.unspent == 0, "allocation spends points")
 
 	var caps := Stats.new()
@@ -48,21 +48,21 @@ static func run(check: Callable, _c = null) -> void:
 	b.add_modifier("cultivate", "magic_pow", 1.10, 0.0, 10.0)
 	b.add_modifier("cultivate", "spell_mastery", 1.0, 0.20, 10.0)
 	b.add_modifier("cultivate", "atk_spd", 1.15, 0.0, 10.0)
-	check.call(near(b.value("magic_pow", 5.0), 110.0) and near(b.value("spell_mastery", 5.0), 0.20) and near(b.value("atk_spd", 5.0), 5.75), "Cultivate buffs apply during the 10 s")
-	check.call(near(b.value("magic_pow", 10.0), 100.0) and near(b.value("atk_spd", 10.5), 5.0), "Cultivate buffs end at 10 s")
+	check.call(near(b.value("magic_pow", 5.0), 1100.0) and near(b.value("spell_mastery", 5.0), 0.20) and near(b.value("atk_spd", 5.0), 5.75), "Cultivate buffs apply during the 10 s")
+	check.call(near(b.value("magic_pow", 10.0), 1000.0) and near(b.value("atk_spd", 10.5), 5.0), "Cultivate buffs end at 10 s")
 	b.add_modifier("cultivate", "magic_pow", 1.10, 0.0, 30.0)
-	check.call(near(b.value("magic_pow", 20.0), 110.0), "re-casting refreshes, does not stack (still x1.10)")
+	check.call(near(b.value("magic_pow", 20.0), 1100.0), "re-casting refreshes, does not stack (still x1.10)")
 
 	# --- Progression -----------------------------------------------------------
-	check.call(Progression.exp_required(1) == 100 and Progression.exp_required(2) == 263 and Progression.exp_required(5) == 951
-		and Progression.exp_required(10) == 2511 and Progression.exp_required(20) == 6628, "EXP curve floor(100 L^1.4) matches the spec table")
+	check.call(Progression.exp_required(1) == 50 and Progression.exp_required(2) == 123 and Progression.exp_required(5) == 405
+		and Progression.exp_required(10) == 997 and Progression.exp_required(20) == 2456, "EXP curve floor(50 L^1.3) [Sir, 2026-11-15]")
 	check.call(Progression.points_for_level(9) == 1 and Progression.points_for_level(10) == 2 and Progression.points_for_level(20) == 3, "level-up points scale per 10 levels")
 	check.call(Progression.points_for_rank("D") == 5 and Progression.points_for_rank("C") == 10, "rank-up points 5 x rank")
 
 	var ps := Stats.new()
 	var p := Progression.new(ps)
 	p.on_page_unlocked()
-	check.call(ps.unspent == 3 + 1 and p.level == 2 and p.exp == 50, "page unlock: +3 points, +150 EXP (levels to 2 with 50 over, +1 point)")
+	check.call(ps.unspent == 3 + 1 and p.level == 2 and p.exp == 100, "page unlock: +3 points, +150 EXP (levels to 2 with 100 over, +1 point)")
 	var ranked := []
 	p.ranked.connect(func(r, pts): ranked.append([r, pts]))
 	for i in 19: p.on_kill()
@@ -75,8 +75,8 @@ static func run(check: Callable, _c = null) -> void:
 	var cs := Stats.new()
 	var cp := Progression.new(cs)
 	var lvl := cp.level
-	check.call(cp.on_chant_success("magic_pow") and cs.points.magic_pow == 0 and cs.chant_points.magic_pow == 1 and near(cs.value("magic_pow"), 105.0) and cp.level == lvl and cp.exp == 0 and cs.unspent == 0, "a tier-1 chant: Magic Pow +5, no EXP, no level, no stat point [Sir R9/R10]")
-	var base_gain := {"max_hp": 5.0, "max_mp": 5.0, "magic_pow": 5.0, "mov_spd": 0.4, "atk_spd": 0.25, "spell_mastery": 0.015}
+	check.call(cp.on_chant_success("magic_pow") and cs.points.magic_pow == 0 and cs.chant_points.magic_pow == 1 and near(cs.value("magic_pow"), 1050.0) and cp.level == lvl and cp.exp == 0 and cs.unspent == 0, "a tier-1 chant: Magic Pow +50, no EXP, no level, no stat point [Sir R9/R10]")
+	var base_gain := {"max_hp": 50.0, "max_mp": 5.0, "magic_pow": 50.0, "mov_spd": 0.4, "atk_spd": 0.25, "spell_mastery": 0.015}
 	var gains_ok := true
 	for stat in Stats.STATS:
 		for tier in [1, 4]:
@@ -84,10 +84,10 @@ static func run(check: Callable, _c = null) -> void:
 			var before: float = g.value(stat)
 			g.grant_point(stat, tier)
 			if not near(g.value(stat) - before, base_gain[stat] * (1.0 if tier == 1 else 1.5)): gains_ok = false
-	check.call(gains_ok, "chant gains x tier: HP/MP/Pow +5, Mov Spd +0.4, Atk Spd +0.25, Mastery +1.5% at tier 1; x1.5 at tier 4 [R10]")
+	check.call(gains_ok, "chant gains x tier: HP/Pow +50, MP +5, Mov Spd +0.4, Atk Spd +0.25, Mastery +1.5% at tier 1; x1.5 at tier 4 [R10]")
 	var tiers := Stats.new()
 	tiers.grant_point("max_hp", 2); tiers.grant_point("max_hp", 3)
-	check.call(near(tiers.value("max_hp"), 100.0 + 5.0 * 1.15 + 5.0 * 1.3), "each chant keeps the gain of its own tier (x1.15 then x1.3)")
+	check.call(near(tiers.value("max_hp"), 1000.0 + 50.0 * 1.15 + 50.0 * 1.3), "each chant keeps the gain of its own tier (x1.15 then x1.3)")
 	var cap := Stats.new()
 	var n_ch := 0
 	while cap.grant_point("mov_spd") and n_ch < 100: n_ch += 1
@@ -100,7 +100,7 @@ static func run(check: Callable, _c = null) -> void:
 	cs.unspent = 2
 	cs.allocate("max_hp"); cs.allocate("mov_spd")
 	var refund: int = cs.reset_stats()
-	check.call(refund == 4 and cs.unspent == 4 and near(cs.value("max_hp"), 100.0) and near(cs.value("magic_pow"), 100.0) and near(cs.value("mov_spd"), 10.0) and cs.chant_points.magic_pow == 0, "reset stats: 2 allocated + 2 chants refunded as 4 points, every stat at base")
+	check.call(refund == 4 and cs.unspent == 4 and near(cs.value("max_hp"), 1000.0) and near(cs.value("magic_pow"), 1000.0) and near(cs.value("mov_spd"), 10.0) and cs.chant_points.magic_pow == 0, "reset stats: 2 allocated + 2 chants refunded as 4 points, every stat at base")
 
 	# --- Effects ---------------------------------------------------------------
 	var fx := Effects.new()

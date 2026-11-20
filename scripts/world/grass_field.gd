@@ -40,6 +40,7 @@ static func night_palette() -> GradientTexture2D:
 	t.gradient = g
 	return t
 
+var surface: RefCounted
 var seed := 0
 var material: ShaderMaterial
 var mesh: QuadMesh
@@ -106,8 +107,12 @@ func update(budget: int) -> int:
 			chunks[key] = _build(key)
 			built += 1
 		chunks[key].visible = true
-	for key in chunks:
-		if not keep.has(key): chunks[key].visible = false
+	for key in chunks.keys():
+		if not keep.has(key):
+			chunks[key].visible = false
+			if (Vector2(key)*CHUNK-c).length() > build_r + CHUNK*3:
+				chunks[key].queue_free()
+				chunks.erase(key)
 	return built
 
 func blade_count() -> int:
@@ -125,8 +130,8 @@ func _build(key: Vector2i) -> MultiMeshInstance3D:
 	for i in n:
 		var p := Vector2((key.x + rng.randf()) * CHUNK, (key.y + rng.randf()) * CHUNK)
 		var s := rng.randf_range(0.8, 1.3)
-		if Forest.centreline_dist(p) < PATH_CLEAR or p.distance_to(fire) < FIRE_CLEAR: continue
-		spots.append_array([s, 0.0, 0.0, p.x, 0.0, s, 0.0, 0.0, 0.0, 0.0, s, p.y])
+		if Forest.near_path(p, PATH_CLEAR) or p.distance_to(fire) < FIRE_CLEAR: continue
+		spots.append_array([s, 0.0, 0.0, p.x, 0.0, s, 0.0, surface.height_at(p) if surface else 0.0, 0.0, 0.0, s, p.y])
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = mesh

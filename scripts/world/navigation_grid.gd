@@ -13,26 +13,30 @@ const BODY_LOW := 0.1
 const BODY_HIGH := 1.7
 var body_high := BODY_HIGH # per grid: a crouching player fits under 1.3 m, a standing enemy does not
 
+var cell_size := CELL
+var surface: RefCounted
 var origin := Vector2.ZERO   # world x/z of cell (0, 0) corner
 var size := Vector2i.ZERO
 var astar := AStarGrid2D.new()
 var revision := 0
 
-func setup(min_xz: Vector2, max_xz: Vector2) -> void:
+func setup(min_xz: Vector2, max_xz: Vector2, spacing := CELL) -> void:
+	cell_size = spacing
 	origin = min_xz
-	size = Vector2i(ceili((max_xz.x - min_xz.x) / CELL), ceili((max_xz.y - min_xz.y) / CELL))
+	size = Vector2i(ceili((max_xz.x - min_xz.x) / cell_size), ceili((max_xz.y - min_xz.y) / cell_size))
 	astar.region = Rect2i(Vector2i.ZERO, size)
-	astar.cell_size = Vector2(CELL, CELL)
+	astar.cell_size = Vector2(cell_size, cell_size)
 	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	astar.update()
 
 func cell_of(p: Vector3) -> Vector2i:
-	return Vector2i(floori((p.x - origin.x) / CELL), floori((p.z - origin.y) / CELL))
+	return Vector2i(floori((p.x - origin.x) / cell_size), floori((p.z - origin.y) / cell_size))
 
 func centre_of(c: Vector2i) -> Vector3:
-	return Vector3(origin.x + (c.x + 0.5) * CELL, 0.0, origin.y + (c.y + 0.5) * CELL)
+	var p := origin + (Vector2(c)+Vector2(0.5,0.5))*cell_size
+	return Vector3(p.x, surface.height_at(p) if surface else 0.0, p.y)
 
 func in_bounds(c: Vector2i) -> bool:
 	return astar.is_in_boundsv(c)
@@ -54,18 +58,21 @@ func rebuild(solids: Array) -> void:
 	astar.fill_solid_region(astar.region, false)
 	for box in solids:
 		var b: AABB = box
-		if b.end.y <= BODY_LOW or b.position.y >= body_high: continue
-		var lo := cell_of(Vector3(b.position.x - AGENT_RADIUS, 0, b.position.z - AGENT_RADIUS))
-		var hi := cell_of(Vector3(b.end.x + AGENT_RADIUS, 0, b.end.z + AGENT_RADIUS))
+		if surface == null and (b.end.y <= BODY_LOW or b.position.y >= body_high): continue
+		var lo := cell_of(Vector3(b.position.x - AGENT_RADIUS - (cell_size if surface else 0.0), 0, b.position.z - AGENT_RADIUS - (cell_size if surface else 0.0)))
+		var hi := cell_of(Vector3(b.end.x + AGENT_RADIUS + (cell_size if surface else 0.0), 0, b.end.z + AGENT_RADIUS + (cell_size if surface else 0.0)))
 		for x in range(maxi(lo.x, 0), mini(hi.x, size.x - 1) + 1):
-			var px := origin.x + (x + 0.5) * CELL
+			var px := origin.x + (x + 0.5) * cell_size
 			var dx := maxf(maxf(b.position.x - px, 0.0), px - b.end.x)
 			for y in range(maxi(lo.y, 0), mini(hi.y, size.y - 1) + 1):
 				var c := Vector2i(x, y)
 				if astar.is_point_solid(c): continue
-				var pz := origin.y + (y + 0.5) * CELL
+				var pz := origin.y + (y + 0.5) * cell_size
 				var dz := maxf(maxf(b.position.z - pz, 0.0), pz - b.end.z)
-				if sqrt(dx * dx + dz * dz) < AGENT_RADIUS: astar.set_point_solid(c, true)
+				var ground: float = surface.height_at(Vector2(px,pz)) if surface else 0.0
+				if b.end.y <= ground + BODY_LOW or b.position.y >= ground + body_high: continue
+				var margin := AGENT_RADIUS + (cell_size * 0.707107 if surface else 0.0)
+				if sqrt(dx * dx + dz * dz) < margin: astar.set_point_solid(c, true)
 	revision += 1
 
 # Nearest free cell to p (spiral search), or (-1, -1).
@@ -80,7 +87,8 @@ func nearest_free(p: Vector3, max_ring := 4) -> Vector2i:
 				if maxi(absi(dx), absi(dy)) != r: continue
 				var n := c + Vector2i(dx, dy)
 				if blocked(n): continue
-				var d := centre_of(n).distance_to(Vector3(p.x, 0, p.z))
+				var centre := centre_of(n)
+				var d := Vector2(centre.x-p.x, centre.z-p.z).length_squared()
 				if d < best_d:
 					best_d = d
 					best = n
@@ -98,5 +106,5 @@ func find_path(from: Vector3, to: Vector3) -> Dictionary:
 	if ids.is_empty(): return {"ok": false, "path": [], "reason": "no route", "revision": revision}
 	var path: Array[Vector3] = []
 	for i in range(1, ids.size()): path.append(centre_of(ids[i]))
-	if b == cell_of(to) and not path.is_empty(): path[path.size() - 1] = Vector3(to.x, 0, to.z)
+	if b == cell_of(to) and not path.is_empty(): path[path.size() - 1] = Vector3(to.x, surface.height_at(Vector2(to.x,to.z)) if surface else 0.0, to.z)
 	return {"ok": true, "path": path, "reason": "", "revision": revision}

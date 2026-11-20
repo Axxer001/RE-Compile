@@ -26,6 +26,7 @@ static func body_mesh(model: Node) -> MeshInstance3D:
 	var best: MeshInstance3D = null
 	for m in model.find_children("*", "MeshInstance3D", true, false):
 		var mi := m as MeshInstance3D
+		if not mi.mesh is ArrayMesh: continue # the glowing eyes (primitive spheres) and other add-ons
 		if best == null or mi.mesh.surface_get_array_len(0) > best.mesh.surface_get_array_len(0): best = mi
 	return best
 

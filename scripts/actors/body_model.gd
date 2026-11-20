@@ -4,26 +4,23 @@ extends RefCounted
 # (outfit_builder.gd) and the Universal Animation Library clips.
 
 const OutfitBuilder = preload("res://scripts/actors/outfit_builder.gd")
+const Look = preload("res://scripts/render/look.gd")
 const BODY_MALE := "res://assets/quaternius/base_characters/Superhero_Male_FullBody.gltf"
 const BODY_FEMALE := "res://assets/quaternius/base_characters/Superhero_Female_FullBody.gltf"
 # Universal Animation Library 1 + 2 (CC0, the same 65-bone rig as the bodies).
 const ANIMS := "res://assets/quaternius/animations/UAL1_Standard.glb"
 const ANIMS_2 := "res://assets/quaternius/animations_2/UAL2_Standard.glb"
-# clip key -> [library clip, loops]. The first eight keys are the original set
-# (kept for existing callers); the rest are player locomotion and casting
-# (player_body.gd) and the Sprite's zombie set (blighted_sprite.gd).
-const CLIPS := {"idle": ["Idle", true], "walk": ["Walk", true], "jog": ["Jog_Fwd", true], "crawl": ["Crouch_Fwd", true],
+# clip key -> [library clip, loops]: the enemies' clips (the player has no body
+# since 2026-11-19: it holds the grimoire and a wand, held_rig.gd).
+const CLIPS := {"idle": ["Idle", true], "walk": ["Walk", true], "jog": ["Jog_Fwd", true],
 	"crouch": ["Crouch_Idle", true], "bite": ["Punch_Jab", false], "hit": ["Hit_Chest", false], "death": ["Death01", false],
-	# player movement
 	"run": ["Sprint", true], "jump_start": ["NinjaJump_Start", false], "jump_air": ["NinjaJump_Idle", true],
-	"land": ["NinjaJump_Land", false], "slide_start": ["Slide_Start", false], "slide": ["Slide", true],
-	"slide_exit": ["Slide_Exit", false], "climb": ["ClimbUp_1m", false], "roll": ["Roll", false],
-	# casting (attacks wire later)
-	"cast_enter": ["Spell_Simple_Enter", false], "cast_idle": ["Spell_Simple_Idle", true],
-	"cast_shoot": ["Spell_Simple_Shoot", false], "cast_exit": ["Spell_Simple_Exit", false], "throw": ["OverhandThrow", false],
+	"land": ["NinjaJump_Land", false], "climb": ["ClimbUp_1m", false],
 	# Blighted Sprite
 	"zombie_idle": ["Zombie_Idle", true], "zombie_walk": ["Zombie_Walk_Fwd", true], "zombie_scratch": ["Zombie_Scratch", false],
-	"knockback": ["Hit_Knockback", false]}
+	"knockback": ["Hit_Knockback", false],
+	# Forest Ghoul [2026-11-15]: UAL1/UAL2 have no bow clips; the pistol aim and shot stand in.
+	"aim": ["Pistol_Aim_Neutral", true], "shoot": ["Pistol_Shoot", false]}
 
 static var _lib: AnimationLibrary
 
@@ -56,12 +53,15 @@ static func build(parent: Node3D, female: bool, skin_tint: Color, outfit: Dictio
 	parent.add_child(model)
 	var body := OutfitBuilder.body_mesh(model)
 	var skin: BaseMaterial3D = body.mesh.surface_get_material(0).duplicate()
-	skin.albedo_color = skin_tint
+	skin.albedo_color = Look.palette_tint(skin_tint, 0.35) # the muted earthy palette [graphics direction 2026-11-20]
+	Look.matte(skin)
+	skin.set_meta("rc_muted", true)
 	if emission != Color.BLACK:
 		skin.emission_enabled = true
 		skin.emission = emission
 	body.set_surface_override_material(0, skin)
 	OutfitBuilder.dress(model, outfit)
+	Look.mute(model) # cloth and the rest: matte, toward the palette
 	var anim := AnimationPlayer.new()
 	anim.name = "Anim"
 	model.add_child(anim)

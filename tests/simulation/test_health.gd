@@ -10,7 +10,8 @@ static func hit(action: int, amount: float, kind := "melee", faction := "infecte
 static func run(check: Callable, c: Node3D) -> void:
 	c.session.restart()
 	var h = c.player.health
-	check.call(h.hp == 100.0 and h.max_hp == 100.0 and not h.dead, "player starts at 100 HP")
+	var B: float = 1000.0 # the player's base HP since the rescale [Sir, 2026-11-15]
+	check.call(h.hp == B and h.max_hp == B and not h.dead, "player starts at 1000 HP")
 	var log := {"damaged": [], "died": 0}
 	var on_damaged := func(_p, applied: float) -> void: log.damaged.append(applied)
 	var on_died := func(_p) -> void: log.died += 1
@@ -18,11 +19,11 @@ static func run(check: Callable, c: Node3D) -> void:
 	h.died.connect(on_died)
 
 	# Duplicate contacts from one action apply once; a new action applies again.
-	check.call(h.apply(hit(1, 10), 0.0) == "applied" and h.hp == 90.0, "first contact applies 10")
+	check.call(h.apply(hit(1, 10), 0.0) == "applied" and h.hp == B - 10.0, "first contact applies 10")
 	for i in 3:
 		check.call(h.apply(hit(1, 10), 0.0) == "duplicate", "repeat contact %d of action 1 deduplicated" % i)
-	check.call(h.hp == 90.0, "duplicates leave HP unchanged")
-	check.call(h.apply(hit(2, 10), 0.0) == "applied" and h.hp == 80.0, "second action applies")
+	check.call(h.hp == B - 10.0, "duplicates leave HP unchanged")
+	check.call(h.apply(hit(2, 10), 0.0) == "applied" and h.hp == B - 20.0, "second action applies")
 	var other := Health.new()
 	other.faction = "player_ally"
 	other.reset()
@@ -36,7 +37,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	for p in bad:
 		check.call(h.apply(p, 0.0) == "invalid", "invalid packet refused (action %d, amount %s, faction '%s', kind %s)" % [p.action_id, p.amount, p.source_faction, p.kind])
 	check.call(h.apply(hit(3, 5, "melee", "player"), 0.0) == "friendly", "same-faction damage refused")
-	check.call(h.hp == 80.0 and log.damaged.size() == 2, "refusals emit nothing and change nothing")
+	check.call(h.hp == B - 20.0 and log.damaged.size() == 2, "refusals emit nothing and change nothing")
 	check.call(h.apply(hit(3, 5), 0.0) == "applied", "refused action id is not burned")
 
 	# Immunity window: declared kinds only, simulation-time bounded.
@@ -46,11 +47,11 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(h.apply(hit(6, 5, "fire"), 0.5) == "applied", "fire not covered by melee immunity")
 	check.call(h.apply(hit(7, 5, "blast"), 0.5) == "applied", "blast not covered by melee immunity")
 	check.call(h.apply(hit(4, 10, "melee"), 1.0) == "applied", "same melee action lands once window ends")
-	check.call(h.hp == 55.0, "HP after immunity sequence is 55 (%s)" % h.hp)
+	check.call(h.hp == B - 45.0, "HP after immunity sequence is %d (%s)" % [int(B - 45.0), h.hp])
 
 	# Exactly lethal latches death at 0; overkill is clipped; death emits once.
-	check.call(h.apply(hit(8, 54), 2.0) == "applied" and h.hp == 1.0, "54 leaves 1 HP")
-	check.call(h.apply(hit(9, 500, "blast"), 2.0) == "lethal", "overkill is lethal")
+	check.call(h.apply(hit(8, B - 46.0), 2.0) == "applied" and h.hp == 1.0, "%d leaves 1 HP" % int(B - 46.0))
+	check.call(h.apply(hit(9, 5000, "blast"), 2.0) == "lethal", "overkill is lethal")
 	check.call(h.hp == 0.0 and h.dead and log.damaged.back() == 1.0, "overkill clipped to remaining 1 HP")
 	check.call(log.died == 1, "died emitted once")
 	for kind in ["melee", "fire"]:
@@ -65,7 +66,7 @@ static func run(check: Callable, c: Node3D) -> void:
 
 	# Restart gives a fresh, living player.
 	c.session.restart()
-	check.call(h.hp == 100.0 and not h.dead and h.accepts_actions(), "restart restores 100 HP and life")
+	check.call(h.hp == B and not h.dead and h.accepts_actions(), "restart restores 1000 HP and life")
 	check.call(h.apply(hit(1, 10), 0.0) == "applied", "action ids from the previous run do not carry over")
 	h.damaged.disconnect(on_damaged)
 	h.died.disconnect(on_died)

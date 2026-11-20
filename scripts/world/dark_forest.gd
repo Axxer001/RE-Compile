@@ -1,20 +1,23 @@
 extends RefCounted
 # The Dark Forest (Grimoire MVP P7, handoff §7 and Sir's R11): the game world.
-# A 150 x 150 m forest. Fixed and hand-made: the clearing network and the
-# paths between clearings, the start camp with its lit fire, the ground,
+# A 250 x 250 m forest. Fixed and hand-made: the clearing network and the
+# start camp with its lit fire, the ground,
 # the boundary and the moon. Drawn fresh from a seed on every run (R11): the
 # trees (positions and density; trunks and crowns as two MultiMeshes, a
-# cylinder collider each), the rocks and mantle ledges, the 3 page spots and
-# the 6 Sprite spawn zones. generate(seed) is pure data (same seed, same
+# cylinder collider each), the rocks and mantle ledges, all collectible page spots and
+# the 24 hostile spawn zones. generate(seed) is pure data (same seed, same
 # map); rule_violations() checks a map against R11's rules; build() makes the
 # fixed part once and scatter() makes a generated map under it. Every solid is
 # returned as a world AABB for the navigation grid. World axes: +X east, +Z
 # south (the camp is in the south), +Y up; metres.
 # The movement arena (greybox.gd) stays for the movement tests.
 
-const SIZE := Vector2(150, 150)
-const BOUNDS := [Vector2(0, 0), Vector2(150, 150)]
-const WALL_H := 10.0             # invisible boundary, behind the tree line
+const SIZE := Vector2(250, 250)
+const PageLibrary = preload("res://scripts/core/page_library.gd")
+const MetaProfile = preload("res://scripts/core/meta_profile.gd")
+const Terrain = preload("res://scripts/world/forest_terrain.gd")
+const BOUNDS := [Vector2(0, 0), Vector2(250, 250)]
+const WALL_H := 24.0             # invisible boundary, behind the tree line
 
 # Clearings [centre x, centre z, radius]: index 0 is the camp.
 const CLEARINGS := [
@@ -25,13 +28,22 @@ const CLEARINGS := [
 	[75.0, 58.0, 13.0],   # 4 the stones
 	[45.0, 38.0, 15.0],   # 5 north-west glade
 	[108.0, 32.0, 15.0],  # 6 north-east glade
+	[175.0, 40.0, 12.0],
+	[225.0, 65.0, 12.0],
+	[185.0, 105.0, 12.0],
+	[45.0, 190.0, 12.0],
+	[105.0, 210.0, 12.0],
+	[165.0, 195.0, 12.0],
+	[220.0, 215.0, 12.0],
+	[220.0, 155.0, 12.0],
+	[150.0, 145.0, 12.0],
 ]
-# Paths between clearings (indices), 8 m wide, along the centre-to-centre line.
-const PATHS := [[0, 1], [1, 2], [1, 3], [1, 4], [4, 5], [4, 6], [2, 5], [3, 6]]
+# Empty for wilderness maps; retained for shared clearance helpers.
+const PATHS := [] # Wilderness: no painted, cleared or flattened path network.
 const PATH_HALF_W := 4.0
 const TREE_CLEAR := 1.2          # trees stay this far outside a clearing or path
 
-const SPAWN := {"at": Vector3(75, 0, 134), "yaw": 0.0} # the camp, facing north up the path
+const SPAWN := {"at": Vector3(75, 0, 134), "yaw": 0.0} # the camp, facing north
 const CAMPFIRE := Vector3(75, 0, 129)
 const CAMP := 0
 
@@ -42,7 +54,7 @@ const PAGE_MIN_FROM_ZONE := 15.0
 const CENTRELINE_CLEAR := 3.0    # no tree, rock or spawn zone this close to a path centreline
 const ZONE_MIN_FROM_START := 30.0 # [design] none aggroes at the start (16 m) or comes out on top of it
 const ZONE_MIN_APART := 8.0      # [design]
-const ZONE_COUNT := 6
+const ZONE_COUNT := 24
 # Which clearings each page may lie in: Quick Step the nearest beyond the camp
 # ("near the start" [§7], still >= 25 m [R11]); the others deeper in.
 const PAGE_CLEARINGS := {"quick_step": [1], "ring_of_fire": [2, 4, 5], "sage_arts": [3, 4, 6]}
@@ -50,6 +62,25 @@ const LEDGE_TOPS := [1.0, 2.0, 3.0] # always one each: mantle tech [§7]
 const AGENT_MARGIN := 0.6        # a walker's radius plus a little, round every obstacle
 
 static var _mats := {}
+static var _path_bins := {}
+
+# Exact distance checks, restricted to segments intersecting this 32 m cell.
+static func near_path(p: Vector2, radius: float) -> bool:
+	if radius > 16.0: return centreline_dist(p) <= radius
+	if _path_bins.is_empty():
+		for edge in PATHS:
+			var a := _centre(edge[0])
+			var b := _centre(edge[1])
+			var lo := (a.min(b)-Vector2.ONE*16.0)/32.0
+			var hi := (a.max(b)+Vector2.ONE*16.0)/32.0
+			for z in range(floori(lo.y),floori(hi.y)+1):
+				for x in range(floori(lo.x),floori(hi.x)+1):
+					var key := Vector2i(x,z)
+					if not _path_bins.has(key): _path_bins[key] = []
+					_path_bins[key].append([a,b])
+	for edge in _path_bins.get(Vector2i(floori(p.x/32),floori(p.y/32)),[]):
+		if _seg_dist(p,edge[0],edge[1]) <= radius: return true
+	return false
 
 static func material(kind: String) -> StandardMaterial3D:
 	if _mats.has(kind): return _mats[kind]
@@ -107,7 +138,7 @@ static func centreline_point(p: Vector2) -> Vector2:
 static func is_open(p: Vector2, margin := 0.0) -> bool:
 	for c in CLEARINGS:
 		if p.distance_to(Vector2(c[0], c[1])) <= float(c[2]) + margin: return true
-	return centreline_dist(p) <= PATH_HALF_W + margin
+	return near_path(p, PATH_HALF_W + margin)
 
 static func in_camp(p: Vector2, margin := 0.0) -> bool:
 	return p.distance_to(_centre(CAMP)) <= float(CLEARINGS[CAMP][2]) + margin
@@ -157,8 +188,11 @@ static func generate(seed: int, attempts := 50) -> Dictionary:
 	push_warning("DarkForest: seed %d gave no valid map in %d draws" % [seed, attempts])
 	return {}
 
+static func page_ids() -> Array:
+	return PageLibrary.IDS.filter(func(id): return id not in MetaProfile.START_PAGES)
+
 static func _draw(rng: RandomNumberGenerator, seed: int) -> Dictionary:
-	var layout := {"seed": seed, "step": rng.randf_range(4.0, 5.2), "trees": [], "rocks": [], "ledges": [], "pages": {}, "zones": []}
+	var layout := {"seed": seed, "step": rng.randf_range(6.0, 7.5), "trees": [], "rocks": [], "ledges": [], "pages": {}, "zones": []}
 	var obs := []
 	var wild := range(1, CLEARINGS.size()) # every clearing but the camp
 	# Ledges: one each of 1 / 2 / 3 m together in one clearing (a mantle course), plus a few loose ones.
@@ -181,9 +215,9 @@ static func _draw(rng: RandomNumberGenerator, seed: int) -> Dictionary:
 			layout.rocks.append([at.x, at.y, w, d, rng.randf_range(0.6, 1.2), rng.randf_range(-60.0, 60.0)])
 			obs.append([at, _reach(w, d)])
 	# Pages, from candidate spots in their clearings.
-	for id in ["quick_step", "ring_of_fire", "sage_arts"]:
-		var opts: Array = PAGE_CLEARINGS[id].duplicate()
-		for tries in 60:
+	for id in ["quick_step", "ring_of_fire", "sage_arts"] + page_ids().filter(func(id): return not PAGE_CLEARINGS.has(id)):
+		var opts: Array = PAGE_CLEARINGS.get(id, wild).duplicate()
+		for tries in 300:
 			var ci: int = opts[rng.randi() % opts.size()]
 			var pt := _in_clearing(rng, ci, 1.5)
 			if pt.distance_to(Vector2(SPAWN.at.x, SPAWN.at.z)) < PAGE_MIN_FROM_START: continue
@@ -195,13 +229,13 @@ static func _draw(rng: RandomNumberGenerator, seed: int) -> Dictionary:
 			layout.pages[id] = Vector3(pt.x, 0, pt.y)
 			break
 	# Spawn zones.
-	for tries in 400:
+	for tries in 4000:
 		if layout.zones.size() >= ZONE_COUNT: break
 		var ci: int = wild[rng.randi() % wild.size()]
-		var pt := _in_clearing(rng, ci, 1.0)
+		var pt := _in_clearing(rng, ci, 3.0)
 		if pt.distance_to(Vector2(SPAWN.at.x, SPAWN.at.z)) < ZONE_MIN_FROM_START: continue
-		if centreline_dist(pt) < CENTRELINE_CLEAR or in_camp(pt): continue
-		if not _clear_of(pt, obs, AGENT_MARGIN + 0.4): continue
+		if centreline_dist(pt) < CENTRELINE_CLEAR + 2.0 or in_camp(pt): continue
+		if not _clear_of(pt, obs, AGENT_MARGIN + 2.0): continue
 		var bad := false
 		for pg in layout.pages.values():
 			if pt.distance_to(Vector2(pg.x, pg.z)) < PAGE_MIN_FROM_ZONE: bad = true
@@ -209,18 +243,59 @@ static func _draw(rng: RandomNumberGenerator, seed: int) -> Dictionary:
 			if pt.distance_to(Vector2(z.at.x, z.at.z)) < ZONE_MIN_APART: bad = true
 		if bad: continue
 		layout.zones.append({"id": "zone_%d" % (layout.zones.size() + 1), "at": Vector3(pt.x, 0, pt.y), "yaw": rng.randf_range(-180.0, 180.0)})
+	# Reject invalid content placement before generating decorations.
+	if not rule_violations(layout).is_empty(): return layout
 	# Trees on a jittered grid at this map's density, never in the open.
 	var step: float = layout.step
 	var n := int(SIZE.x / step)
 	for gz in n + 1:
 		for gx in n + 1:
-			var p := Vector2(gx * step + rng.randf_range(-0.35, 0.35) * step, gz * step + rng.randf_range(-0.35, 0.35) * step)
+			var p := Vector2(gx * step + rng.randf_range(-0.2, 0.2) * step, gz * step + rng.randf_range(-0.2, 0.2) * step)
 			var r := rng.randf_range(0.3, 0.6)
 			var h := rng.randf_range(13.0, 21.0)
 			if p.x < 1.0 or p.y < 1.0 or p.x > SIZE.x - 1.0 or p.y > SIZE.y - 1.0: continue
 			if is_open(p, TREE_CLEAR + r): continue
+			var profile := posmod(int(p.x / 75) * 17 + int(p.y / 75) * 31 + seed, 3)
+			if rng.randf() > [0.7, 0.85, 1.0][profile]: continue
 			layout.trees.append([p.x, p.y, r, h])
+	# Stratified rock clusters across every 50 m sector, with local tree clearance.
+	var occupied := {}
+	for t in layout.trees: _occupy(occupied, Vector2(t[0], t[1]), TRUNK_MAX)
+	for o in obs: _occupy(occupied, o[0], o[1])
+	for sz in int(SIZE.y / 50):
+		for sx in int(SIZE.x / 50):
+			var placed := 0
+			for attempt in 40:
+				if placed >= 3: break
+				var p := Vector2(sx*50+rng.randf_range(4,46),sz*50+rng.randf_range(4,46))
+				var w := rng.randf_range(1.2,2.6)
+				var d := rng.randf_range(1,2)
+				var reach := _reach(w,d)
+				if is_open(p, reach + TREE_CLEAR) or not _space_free(occupied,p,reach+AGENT_MARGIN): continue
+				layout.rocks.append([p.x,p.y,w,d,rng.randf_range(0.6,1.4),rng.randf_range(-60,60)])
+				_occupy(occupied,p,reach)
+				placed += 1
+	var surface := Terrain.new(seed, CLEARINGS, PATHS)
+	for id in layout.pages:
+		var p: Vector3 = layout.pages[id]
+		p.y = surface.height_at(Vector2(p.x,p.z))
+		layout.pages[id] = p
+	for zone in layout.zones:
+		zone.at.y = surface.height_at(Vector2(zone.at.x,zone.at.z))
 	return layout
+
+static func _occupy(grid: Dictionary, at: Vector2, radius: float) -> void:
+	var key := Vector2i(floori(at.x/8),floori(at.y/8))
+	if not grid.has(key): grid[key] = []
+	grid[key].append([at,radius])
+
+static func _space_free(grid: Dictionary, at: Vector2, radius: float) -> bool:
+	var key := Vector2i(floori(at.x/8),floori(at.y/8))
+	for z in range(-1,2):
+		for x in range(-1,2):
+			for o in grid.get(key+Vector2i(x,z),[]):
+				if at.distance_squared_to(o[0]) < pow(radius+float(o[1]),2): return false
+	return true
 
 # A spot in clearing `ci` for an obstacle of `reach`: clear of the path
 # centrelines by 3 m plus a walker's width, of the camp, and of other obstacles.
@@ -233,19 +308,12 @@ static func _place(rng: RandomNumberGenerator, ci: int, reach: float, obs: Array
 		return pt
 	return Vector2(INF, INF)
 
-# R11's rules for a generated map ([] = valid):
-#   every page spot and spawn zone reachable from the start (the camp joins
-#   the path network; a spot is reachable when it is clear of every obstacle
-#   and the straight walk to its nearest path centreline is too, since the
-#   centrelines are kept 3 m clear of everything);
-#   pages >= 25 m from the start, >= 20 m apart, >= 15 m from any spawn zone;
-#   no tree, rock or spawn zone within 3 m of a path centreline or in the camp;
-#   plus the MVP's own needs: 3 pages, 6 zones, the 1 / 2 / 3 m ledges.
+# Placement and spacing checks; real navigation connectivity is tested separately.
 static func rule_violations(layout: Dictionary) -> Array:
 	var bad := []
 	var start := Vector2(SPAWN.at.x, SPAWN.at.z)
 	var obs := obstacles(layout)
-	if layout.pages.size() != 3: bad.append("pages: %d of 3" % layout.pages.size())
+	if layout.pages.size() != page_ids().size() or not page_ids().all(func(id): return layout.pages.has(id)): bad.append("missing collectible pages")
 	if layout.zones.size() != ZONE_COUNT: bad.append("zones: %d of %d" % [layout.zones.size(), ZONE_COUNT])
 	var tops := []
 	for l in layout.ledges: tops.append(l[4])
@@ -259,9 +327,8 @@ static func rule_violations(layout: Dictionary) -> Array:
 		if not is_open(p): bad.append("%s is in the trees" % sp[0])
 		if not _clear_of(p, obs, AGENT_MARGIN): bad.append("%s is inside an obstacle" % sp[0])
 		var q := centreline_point(p)
-		var steps := maxi(1, ceili(p.distance_to(q) / 0.25))
-		for i in steps + 1:
-			if not _clear_of(p.lerp(q, float(i) / steps), obs, AGENT_MARGIN):
+		for obstacle in obs:
+			if _seg_dist(obstacle[0],p,q) < float(obstacle[1])+AGENT_MARGIN:
 				bad.append("%s: the way to the path is blocked" % sp[0])
 				break
 	var ids: Array = layout.pages.keys()
@@ -283,7 +350,7 @@ static func rule_violations(layout: Dictionary) -> Array:
 		if in_camp(o[0], float(o[1])): bad.append("an obstacle in the camp at %s" % o[0])
 	for t in layout.trees:
 		var p := Vector2(t[0], t[1])
-		if centreline_dist(p) < CENTRELINE_CLEAR + float(t[2]) or in_camp(p, float(t[2])):
+		if near_path(p, CENTRELINE_CLEAR + float(t[2])) or in_camp(p, float(t[2])):
 			bad.append("a tree on a path or in the camp at %s" % p)
 			break
 	return bad
@@ -363,8 +430,6 @@ static func build(parent: Node3D) -> Dictionary:
 	parent.add_child(geo)
 	var w := SIZE.x
 	var d := SIZE.y
-	var floor_solids := []
-	_box(geo, Vector3(w * 0.5, -0.1, d * 0.5), Vector3(w + 2.0, 0.2, d + 2.0), material("ground"), "floor", floor_solids) # not an obstacle
 	_box(geo, Vector3(w * 0.5, WALL_H * 0.5, -0.2), Vector3(w + 1.0, WALL_H, 0.4), null, "bound_north", solids, false)
 	_box(geo, Vector3(w * 0.5, WALL_H * 0.5, d + 0.2), Vector3(w + 1.0, WALL_H, 0.4), null, "bound_south", solids, false)
 	_box(geo, Vector3(-0.2, WALL_H * 0.5, d * 0.5), Vector3(0.4, WALL_H, d + 1.0), null, "bound_west", solids, false)
@@ -412,6 +477,16 @@ static func build(parent: Node3D) -> Dictionary:
 # A generated map under `geo` (the fixed part's node), replacing any earlier
 # one: trees, rocks, ledges. Returns their solids.
 static func scatter(geo: Node3D, layout: Dictionary) -> Array:
+	var terrain := Terrain.new(int(layout.seed), CLEARINGS, PATHS)
+	layout.terrain = terrain
+	var floor_mat: Material = material("ground")
+	var previous_floor := geo.get_node_or_null("floor")
+	if previous_floor:
+		floor_mat = previous_floor.get_child(0).material_override
+		previous_floor.collision_layer = 0
+		geo.remove_child(previous_floor)
+		previous_floor.queue_free()
+	terrain.build(geo, floor_mat)
 	var old := geo.get_node_or_null("Scatter")
 	if old != null:
 		geo.remove_child(old)
@@ -432,12 +507,13 @@ static func scatter(geo: Node3D, layout: Dictionary) -> Array:
 		var z: float = t[1]
 		var r: float = t[2]
 		var h: float = t[3]
+		var ground := terrain.height_at(Vector2(x,z))
 		# [Sir, 2026-11-13: clipping through trees] the collider is as wide as the
 		# drawn kit trunk (less the player's reach), never thinner than the layout's.
 		if kit_trees: r = maxf(r, float(tree_look(t, ti, int(layout.seed)).trunk) - TRUNK_SLACK)
-		trunk_x.append(Transform3D(Basis.from_scale(Vector3(r, h, r)), Vector3(x, h * 0.5, z)))
+		trunk_x.append(Transform3D(Basis.from_scale(Vector3(r, h, r)), Vector3(x, ground + h * 0.5, z)))
 		var cr := r * 6.0
-		crown_x.append(Transform3D(Basis.from_scale(Vector3(cr, h * 0.55, cr)), Vector3(x, h * 0.72, z)))
+		crown_x.append(Transform3D(Basis.from_scale(Vector3(cr, h * 0.55, cr)), Vector3(x, ground + h * 0.72, z)))
 		var body := StaticBody3D.new()
 		body.collision_layer = 1
 		body.collision_mask = 0
@@ -447,23 +523,24 @@ static func scatter(geo: Node3D, layout: Dictionary) -> Array:
 		cyl.height = h
 		col.shape = cyl
 		body.add_child(col)
-		body.position = Vector3(x, h * 0.5, z)
+		body.position = Vector3(x, ground + h * 0.5, z)
 		colliders.add_child(body)
-		solids.append(AABB(Vector3(x - r, 0.0, z - r), Vector3(r * 2.0, h, r * 2.0)))
+		solids.append(AABB(Vector3(x - r, ground, z - r), Vector3(r * 2.0, h, r * 2.0)))
 	_multimesh(root, _cone_mesh(0.8, 1.0, material("trunk")), trunk_x, "Trunks", true)
 	_multimesh(root, _cone_mesh(0.0, 1.0, material("crown")), crown_x, "Crowns", false)
 	for i in layout.rocks.size():
 		var rk: Array = layout.rocks[i]
-		_box(root, Vector3(rk[0], rk[4] * 0.5, rk[1]), Vector3(rk[2], rk[4], rk[3]), material("rock"), "rock_%d" % i, solids, true, rk[5])
+		_box(root, Vector3(rk[0], terrain.height_at(Vector2(rk[0],rk[1])) + rk[4] * 0.5, rk[1]), Vector3(rk[2], rk[4], rk[3]), material("rock"), "rock_%d" % i, solids, true, rk[5])
 	for i in layout.ledges.size():
 		var lg: Array = layout.ledges[i]
-		_box(root, Vector3(lg[0], lg[4] * 0.5, lg[1]), Vector3(lg[2], lg[4], lg[3]), material("ledge"), "ledge_%d" % i, solids)
+		_box(root, Vector3(lg[0], terrain.height_at(Vector2(lg[0],lg[1])) + lg[4] * 0.5, lg[1]), Vector3(lg[2], lg[4], lg[3]), material("ledge"), "ledge_%d" % i, solids)
 	dress(root, layout)
 	return solids
 
 # ---- Fantasy Props (Phase 4) ---------------------------------------------------------
 const PROPS := "res://assets/quaternius/props/"
 const Vfx = preload("res://scripts/render/vfx.gd")
+const Look = preload("res://scripts/render/look.gd")
 
 static func prop_available(name: String) -> bool:
 	return ResourceLoader.exists(PROPS + name + ".gltf") and not OS.has_environment("RC_NO_PROPS")
@@ -544,13 +621,13 @@ static func _dress_camp(camp: Node3D, solids: Array) -> void:
 # The densest of the first `n` seeds (the perf suite runs on it [R11]).
 static func densest_seed(n := 64) -> int:
 	var best := 0
-	var most := -1.0
+	var most := -1
 	for s in n:
-		var rng := RandomNumberGenerator.new()
-		rng.seed = s
-		var step := rng.randf_range(4.0, 5.2) # the first draw of generate() is the density
-		if 1.0 / step > most:
-			most = 1.0 / step
+		var layout := generate(s)
+		if layout.is_empty(): continue
+		# Retries and regional profiles change the realized density.
+		if layout.trees.size() > most:
+			most = layout.trees.size()
 			best = s
 	return best
 
@@ -560,7 +637,15 @@ static func densest_seed(n := 64) -> int:
 # (near), over the cheap cones (far, faded in beyond NEAR_END). Ground cover is
 # scattered from a separate RNG seeded by the map seed, so generate() is unchanged.
 const KIT := "res://assets/quaternius/nature/"
-const TREE_KINDS := [["Pine_5", 0.85], ["DeadTree_1", 0.15]] # perf-tuned 2026-11-13: Pine_5 (1.6k tris) plus opaque dead trees for the eerie look; leafy trees cost ~2 ms
+# A local Philippine forest [Sir, 2026-11-20; docs/plan-graphics-direction.md]: Sir's
+# own tropical plants (made with his Astra tool; assets/tropical/), faceted and
+# nearest-filtered as the pack authored them. They replace Pine_5 and DeadTree_1.
+const TREE_KINDS := [["Narra", 0.3], ["Mango", 0.3], ["Banana", 0.25], ["Bamboo", 0.15]]
+const TROPICAL := "res://assets/tropical/"
+const TREE_FILES := {"Narra": "narra_tree.glb", "Mango": "mango_tree.glb", "Banana": "banana_tree.glb", "Bamboo": "bamboo_clump.glb"}
+# Each plant keeps its own height (Narra 10.2 m, Bamboo 8.5, Mango 6.6, Banana 3.6),
+# varied by this much, instead of being stretched to the layout's tree height.
+const TREE_SCALE := Vector2(0.85, 1.15)
 const ROCK_KINDS := ["Rock_Medium_1", "Rock_Medium_2", "Rock_Medium_3"]
 const CHUNK := 10.0           # small chunks: the visibility range culls close to the real distance
 const NEAR_END := 40.0          # real trees up to here, impostors beyond [Sir, 2026-11-13: trees turned low-poly at 20 m]
@@ -572,11 +657,15 @@ static func set_tree_distance(forest: Node, m: float) -> void:
 	near_end = m
 	if forest == null: return
 	var kit := forest.find_child("KitTrees", true, false)
+	if kit and kit.has_method("set_distance"):
+		kit.set_distance(m)
+		return
 	if kit: for g in kit.find_children("*", "GeometryInstance3D", true, false): (g as GeometryInstance3D).visibility_range_end = m
 	var far := forest.find_child("FarTrees", true, false)
 	if far: for g in far.find_children("*", "GeometryInstance3D", true, false): (g as GeometryInstance3D).visibility_range_begin = m - NEAR_FADE          # the hand-over to the impostors is a wide, dithered cross-fade (no snap)
 # Trunk radius of each kit tree at scale 1 (measured at 1-2 m up the bark).
-const TRUNK_R := {"Pine_5": 0.52, "DeadTree_1": 0.74}
+# Tropical plants: the stem's median radius 0.8-1.6 m up (Bamboo: the whole clump).
+const TRUNK_R := {"Pine_5": 0.52, "DeadTree_1": 0.74, "Narra": 0.46, "Mango": 0.27, "Banana": 0.18, "Bamboo": 0.9}
 const TRUNK_MAX := 0.85         # drawn trunk radius cap (m): taller trees stop getting fatter
 const TRUNK_SLACK := 0.15       # collider = drawn trunk - this (the player's capsule covers the rest)
 
@@ -589,7 +678,7 @@ static func tree_look(t: Array, i: int, seed: int, kinds: Array = TREE_KINDS) ->
 	var kind := _pick(rng, kinds)
 	var e: Array = _kit(kind)
 	var h_kit: float = float(e[0][2]) if not e.is_empty() else 8.5
-	var s: float = float(t[3]) / h_kit * rng.randf_range(0.85, 1.05)
+	var s: float = rng.randf_range(TREE_SCALE.x, TREE_SCALE.y) if TREE_FILES.has(kind) else float(t[3]) / h_kit * rng.randf_range(0.85, 1.05)
 	var tr: float = float(TRUNK_R.get(kind, 0.6))
 	s = minf(s, TRUNK_MAX / tr)
 	return {"kind": kind, "scale": s, "yaw": rng.randf() * TAU, "trunk": tr * s}
@@ -599,12 +688,14 @@ static var _kit_cache := {}
 static func _kit(name: String) -> Array:
 	if _kit_cache.has(name): return _kit_cache[name]
 	var out := []
-	var path := KIT + name + ".gltf"
+	var path: String = TROPICAL + TREE_FILES[name] if TREE_FILES.has(name) else KIT + name + ".gltf"
 	if ResourceLoader.exists(path):
 		var n: Node3D = (load(path) as PackedScene).instantiate()
 		var h := 0.0
 		for m in n.find_children("*", "MeshInstance3D", true, false):
 			var mi := m as MeshInstance3D
+			if TREE_FILES.has(name): mi.mesh.set_meta("rc_tropical", true)
+			else: mi.mesh = Look.faceted(mi.mesh) # kit rocks: per-face normals like the plants
 			_tune(mi.mesh)
 			var x: Transform3D = n.global_transform.affine_inverse() * mi.global_transform if n.is_inside_tree() else _local_to(n, mi)
 			out.append([mi.mesh, x])
@@ -625,6 +716,10 @@ static func _tune(mesh: Mesh) -> void:
 		var mat := mesh.surface_get_material(i) as BaseMaterial3D
 		if mat == null: continue
 		var t: BaseMaterial3D = mat.duplicate()
+		Look.matte(t) # roughness 1, nearest-filtered maps [graphics direction]
+		if mesh.has_meta("rc_tropical"): # the pack's own material (opaque, double-sided): only matte
+			mesh.surface_set_material(i, t)
+			continue
 		var leafy := t.resource_name.to_lower().contains("leaf") or t.resource_name.to_lower().contains("leaves") or t.resource_name.to_lower().contains("grass") or t.resource_name.to_lower().contains("flower")
 		if not leafy:
 			t.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
@@ -634,7 +729,7 @@ static func _tune(mesh: Mesh) -> void:
 
 # kind -> crossed-quad Mesh textured with the baked impostor, in kit units (the
 # same transform as the real tree places it). Empty when not baked.
-const IMPOSTORS := KIT + "impostors/"
+const IMPOSTORS := TROPICAL + "impostors/" # rebaked for the tropical kinds (tools/bake_tree_impostors.gd)
 static var _imp_cache := {}
 static func _impostors() -> Dictionary:
 	if not _imp_cache.is_empty(): return _imp_cache
@@ -700,25 +795,28 @@ static func dress(root: Node3D, layout: Dictionary) -> void:
 	rng.seed = int(layout.seed) * 7919 + 17
 	var chunk_m: float = float(OS.get_environment("RC_CHUNK")) if OS.has_environment("RC_CHUNK") else CHUNK
 	var near_m: float = float(OS.get_environment("RC_NEAR")) if OS.has_environment("RC_NEAR") else near_end
-	var kinds: Array = [["Pine_5", 1.0]] if OS.has_environment("RC_PINES") else TREE_KINDS
+	var kinds: Array = [["Narra", 1.0]] if OS.has_environment("RC_PINES") else TREE_KINDS
 	var chunks := {} # Vector2i -> {kind: [xform]}
-	var far_by_kind := {} # kind -> [xform], every tree (the far LOD)
 	for ti in layout.trees.size():
 		var t: Array = layout.trees[ti]
 		var look := tree_look(t, ti, int(layout.seed), kinds)
 		var kind: String = look.kind
 		var s: float = look.scale
-		var x := Transform3D(Basis(Vector3.UP, float(look.yaw)).scaled(Vector3.ONE * s), Vector3(t[0], 0.0, t[1]))
-		if not far_by_kind.has(kind): far_by_kind[kind] = []
-		far_by_kind[kind].append(x)
+		var x := Transform3D(Basis(Vector3.UP, float(look.yaw)).scaled(Vector3.ONE * s), Vector3(t[0], layout.terrain.height_at(Vector2(t[0],t[1])), t[1]))
 		var key := Vector2i(int(t[0] / chunk_m), int(t[1] / chunk_m))
 		if not chunks.has(key): chunks[key] = {}
 		if not chunks[key].has(kind): chunks[key][kind] = []
 		chunks[key][kind].append(x)
-	var trees := Node3D.new()
+	var imp := _impostors()
+	var have_imp := not imp.is_empty()
+	# shortcut: opt-in until repeated GPU captures establish a reliable traversal gain.
+	var stream := OS.has_environment("RC_STREAM_TREES") and not OS.has_environment("RC_EAGER_TREES")
+	for kind in kinds:
+		if not imp.has(kind[0]): stream = false
+	var trees: Node3D = load("res://scripts/world/tree_chunks.gd").new() if stream else Node3D.new()
 	trees.name = "KitTrees"
 	root.add_child(trees)
-	for key in chunks:
+	for key in ([] if stream else chunks.keys()):
 		var c := Node3D.new()
 		c.name = "chunk_%d_%d" % [key.x, key.y]
 		trees.add_child(c)
@@ -727,18 +825,22 @@ static func dress(root: Node3D, layout: Dictionary) -> void:
 	# Far LOD: baked impostors on crossed quads (tools/bake_tree_impostors.gd).
 	# The cone MultiMeshes stay in the tree (tests key on "Trunks") but hide when
 	# impostors exist; without them the cones are the far LOD as before.
-	var imp := _impostors()
-	var have_imp := not imp.is_empty()
+	var far_instances := {}
 	if have_imp:
 		var far := Node3D.new()
 		far.name = "FarTrees"
 		root.add_child(far)
-		for kind in far_by_kind:
-			if not imp.has(kind): continue
-			var inst := _multimesh(far, imp[kind], far_by_kind[kind], "far_" + kind, false)
-			inst.visibility_range_begin = near_m - NEAR_FADE
-			inst.visibility_range_begin_margin = NEAR_FADE
-			inst.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		for key in chunks:
+			far_instances[key] = []
+			for kind in chunks[key]:
+				if not imp.has(kind): continue
+				var inst := _multimesh(far, imp[kind], chunks[key][kind], "far_%s_%d_%d" % [kind,key.x,key.y], false)
+				far_instances[key].append(inst)
+				inst.visibility_range_begin = 0.0 if stream else near_m - NEAR_FADE
+				inst.visibility_range_begin_margin = NEAR_FADE
+				inst.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	if stream:
+		trees.setup(chunks, far_instances, _kit_multimeshes, chunk_m, near_m, Vector2(SPAWN.at.x, SPAWN.at.z))
 	for nm in ["Trunks", "Crowns"]:
 		var cone: GeometryInstance3D = root.get_node_or_null(nm)
 		if cone and have_imp: cone.visible = false
@@ -762,7 +864,7 @@ static func dress(root: Node3D, layout: Dictionary) -> void:
 		var mi := MeshInstance3D.new()
 		mi.name = "kit_rock_%d" % i
 		mi.mesh = e[0][0]
-		mi.transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(rk[5]))).scaled(sc), Vector3(rk[0], 0.0, rk[1])) * (e[0][1] as Transform3D)
+		mi.transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(rk[5]))).scaled(sc), Vector3(rk[0], layout.terrain.height_at(Vector2(rk[0],rk[1])), rk[1])) * (e[0][1] as Transform3D)
 		root.add_child(mi)
 		for v in box.find_children("*", "MeshInstance3D", true, false): (v as MeshInstance3D).visible = false
 		if box is MeshInstance3D: (box as MeshInstance3D).visible = false
@@ -780,7 +882,7 @@ static func dress(root: Node3D, layout: Dictionary) -> void:
 		var lm := MeshInstance3D.new()
 		lm.name = "kit_ledge_%d" % i
 		lm.mesh = le[0][0]
-		lm.transform = Transform3D(Basis.IDENTITY.scaled(lsc), Vector3(lg[0], -la.position.y * lsc.y, lg[1])) * (le[0][1] as Transform3D)
+		lm.transform = Transform3D(Basis.IDENTITY.scaled(lsc), Vector3(lg[0], layout.terrain.height_at(Vector2(lg[0],lg[1])) - la.position.y * lsc.y, lg[1])) * (le[0][1] as Transform3D)
 		root.add_child(lm)
 		for v in lbox.find_children("*", "MeshInstance3D", true, false): (v as MeshInstance3D).visible = false
 	# Ground: Binbun grass over the floor, grown near the camera (grass_field.gd);
@@ -789,4 +891,5 @@ static func dress(root: Node3D, layout: Dictionary) -> void:
 	if GrassField.available():
 		var g: Node3D = GrassField.new()
 		root.add_child(g)
+		g.surface = layout.terrain
 		g.setup(int(layout.seed))

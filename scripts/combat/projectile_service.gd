@@ -294,6 +294,20 @@ func _release(s: Dictionary) -> void:
 var visuals_reused := 0   # counters for the performance runner
 var visuals_created := 0
 var visual_create_us := 0
+var prewarm_us := 0
+# 15 basic shots at base fire rate/lifetime, six ring orbs and a small spare margin.
+func prewarm_visuals() -> void:
+	if root == null: return
+	var start := Time.get_ticks_usec()
+	for kind in ["basic", "special"]:
+		var count := 24 if kind == "basic" else 2
+		while _free_nodes[kind].size() < count:
+			var n := _shot_visual(kind, Vector3.ZERO)
+			n.visible = false
+			_free_nodes[kind].append(n)
+			visuals_created += 1
+	prewarm_us += Time.get_ticks_usec() - start
+
 func _take_visual(kind: String, at: Vector3) -> Node3D:
 	if root == null: return null
 	while not _free_nodes[kind].is_empty():

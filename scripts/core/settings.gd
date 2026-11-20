@@ -9,13 +9,13 @@ signal changed
 
 const PATH := "user://settings.cfg"
 const SLOTS := 2 # primary + secondary binding per action
-const LAYOUT := 3 # key layout version: 1 = shooter, 2 = Grimoire (docs/pivot-grimoire-plan.md §3), 3 = + Effects tab on T [R14]; older saved bindings are dropped
+const LAYOUT := 4 # key layout version: 1 = shooter, 2 = Grimoire (docs/pivot-grimoire-plan.md §3), 3 = + Effects tab on T [R14], 4 = held grimoire: 1-5 pages, Q/E unbound [2026-11-20]; older saved bindings are dropped
 # Rebindable actions in menu order; pause/confirm stay fixed (Esc/Enter).
 const ACTIONS := ["move_forward", "move_back", "move_left", "move_right", "jump", "crouch", "dash",
-	"attack", "special", "skill_1", "skill_2", "spell_1", "spell_2", "spell_3", "interact", "grimoire", "effects_tab"]
+	"attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact", "grimoire", "effects_tab"]
 const LABELS := {"move_forward": "Forward", "move_back": "Back", "move_left": "Left", "move_right": "Right",
-	"jump": "Jump / Double jump", "crouch": "Crouch / Slide", "dash": "Dash", "attack": "Basic attack", "special": "Special attack",
-	"skill_1": "Skill 1", "skill_2": "Skill 2", "spell_1": "Spell 1", "spell_2": "Spell 2", "spell_3": "Spell 3",
+	"jump": "Jump / Double jump", "crouch": "Crouch / Slide", "dash": "Dash", "attack": "Cast", "special": "Special",
+	"page_1": "Page 1", "page_2": "Page 2", "page_3": "Page 3", "page_4": "Page 4", "page_5": "Status page", "toggle_book": "Close / open held book",
 	"interact": "Interact", "grimoire": "Grimoire", "effects_tab": "Effects"}
 
 const DEFAULT_HIP := 0.12 # degrees per pixel (the old fps_controller constant)
@@ -26,12 +26,13 @@ var ads_mult := DEFAULT_ADS
 var ads_fov_scale := true # also scale ADS by tan(ads_fov/2)/tan(fov/2), Apex-style
 var invert_y := false
 var damage_numbers := true # floating damage numbers [R14]
+var book_hand := "left"     # the held grimoire's hand; the wand takes the other [Sir, 2026-11-20]
 # Graphics [Sir, 2026-11-14]. Saved under [graphics]. The quality keys follow the
 # preset (Low / Medium / High); changing one by hand makes the preset Custom.
 const WINDOW_SIZES := [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080), Vector2i(2560, 1440)]
 const FPS_CAPS := [0, 60, 120, 144, 165]          # 0 = unlimited
-const GFX_DEFAULTS := {"preset": "high", "window_mode": 0, "window_size": 0, "pixel_scale": 3, "vsync": true, "fps_cap": 0,
-	"fov": 90.0, "shadows": 2, "volumetric_fog": true, "tree_distance": 40.0, "effects": 2, "colour16": true, "film_grain": 2, "camera_shake": true}
+const GFX_DEFAULTS := {"preset": "high", "window_mode": 0, "window_size": 0, "vsync": true, "fps_cap": 0,
+	"fov": 90.0, "shadows": 2, "volumetric_fog": true, "tree_distance": 40.0, "effects": 2, "film_grain": 2, "camera_shake": true}
 const QUALITY_KEYS := ["shadows", "volumetric_fog", "tree_distance", "effects", "grass_distance"]
 const PRESETS := {
 	"low": {"shadows": 0, "volumetric_fog": false, "tree_distance": 20.0, "effects": 0, "grass_distance": 20.0},
@@ -56,12 +57,11 @@ static func _clean_gfx(key: String, value: Variant) -> Variant:
 	match key:
 		"window_mode": return clampi(int(value), 0, 2)
 		"window_size": return clampi(int(value), 0, WINDOW_SIZES.size() - 1)
-		"pixel_scale": return clampi(int(value), 1, 4)
 		"fps_cap": return int(value) if int(value) in FPS_CAPS else 0
 		"fov": return clampf(float(value), 70.0, 110.0)
 		"shadows", "effects", "film_grain": return clampi(int(value), 0, 2)
 		"tree_distance": return clampf(float(value), 20.0, 60.0)
-		"vsync", "volumetric_fog", "colour16", "camera_shake": return bool(value)
+		"vsync", "volumetric_fog", "camera_shake": return bool(value)
 		"preset": return String(value) if String(value) in ["low", "medium", "high", "custom"] else "custom"
 	return value
 
@@ -161,6 +161,7 @@ func set_value(key: String, value: Variant) -> void:
 		"ads_fov_scale": ads_fov_scale = bool(value)
 		"invert_y": invert_y = bool(value)
 		"damage_numbers": damage_numbers = bool(value)
+		"book_hand": book_hand = "left" if String(value) == "left" else "right"
 		"infinite_mana": infinite_mana = bool(value)
 		"gfx_preset":
 			if String(value) == "custom": gfx.preset = "custom"
@@ -218,6 +219,7 @@ func reset() -> void:
 	ads_fov_scale = true
 	invert_y = false
 	damage_numbers = true
+	book_hand = "left"
 	infinite_mana = false
 	grass_distance = DEFAULT_GRASS
 	gfx = GFX_DEFAULTS.duplicate()
@@ -245,6 +247,7 @@ func save(to := "") -> int:
 	cf.set_value("mouse", "ads_fov_scale", ads_fov_scale)
 	cf.set_value("mouse", "invert_y", invert_y)
 	cf.set_value("display", "damage_numbers", damage_numbers)
+	cf.set_value("display", "book_hand", book_hand)
 	cf.set_value("debug", "infinite_mana", infinite_mana)
 	for k in gfx: cf.set_value("graphics", k, gfx[k])
 	cf.set_value("display", "grass_distance", grass_distance)
@@ -267,6 +270,7 @@ func load_from(from := "") -> bool:
 	ads_fov_scale = bool(cf.get_value("mouse", "ads_fov_scale", true))
 	invert_y = bool(cf.get_value("mouse", "invert_y", false))
 	damage_numbers = bool(cf.get_value("display", "damage_numbers", true))
+	book_hand = "left" if String(cf.get_value("display", "book_hand", "left")) == "left" else "right"
 	infinite_mana = bool(cf.get_value("debug", "infinite_mana", false))
 	gfx = GFX_DEFAULTS.duplicate()
 	for k in GFX_DEFAULTS: gfx[k] = _clean_gfx(k, cf.get_value("graphics", k, GFX_DEFAULTS[k]))
