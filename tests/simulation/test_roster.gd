@@ -5,7 +5,7 @@ extends RefCounted
 # stopped and stunned by a rock, cooldown, half damage from the front, every effect
 # halved, no knockback), the player's casting lockout on knockback (Concuss does not
 # lock it), kill EXP per enemy, effects at full value on Sprite and Ghoul.
-# run_forest: packs of up to 4, Ghoul pairs, one Mortus per page clearing, 12 idle Sprites awake.
+# run_forest: Map 1 starts with every enemy in the pool; more are made on demand; 12 idle Sprites awake at most.
 
 const DT := 1.0 / 60.0
 const Arrows = preload("res://scripts/combat/enemy_arrows.gd")
@@ -46,12 +46,12 @@ static func run(check: Callable, c: Node3D) -> void:
 
 	# ---- Forest Ghoul ----------------------------------------------------------------------------
 	var r: CharacterBody3D = c.enemies["ghoul_1"]
-	check.call(r.kind == "ghoul" and r.hp_max == 250.0 and r.health.max_hp == 250.0 and r.move_speed == 5.0 and r.aggro_r == 50.0 and r.deaggro_r == 100.0 and not r.can_climb and r.damage == 70.0 and absf(r.attack_interval - 1.0 / 1.5) < 1e-6 and r.kill_exp == 35, "Forest Ghoul (renamed from Forest Ranger [15b]): 250 HP, 70 an arrow at 1.5/s, 5 m/s, detection 50 m, gives up past 100 m, cannot climb, 35 EXP")
+	check.call(r.kind == "ghoul" and r.hp_max == 250.0 and r.health.max_hp == 250.0 and r.move_speed == 5.0 and r.aggro_r == 35.0 and r.deaggro_r == 45.0 and not r.can_climb and r.damage == 70.0 and absf(r.attack_interval - 1.0 / 1.5) < 1e-6 and r.kill_exp == 35, "Forest Ghoul (renamed from Forest Ranger [15b]): 250 HP, 70 an arrow at 1.5/s, 5 m/s, detection 35 m, gives up past 45 m [Map 1 spec §4], cannot climb, 35 EXP")
 	check.call(Arrows.SPEED == 10.0 and is_equal_approx(Arrows.homing_speed(25.0), 5.0) and is_equal_approx(Arrows.homing_speed(20.0), 5.0) and is_equal_approx(Arrows.homing_speed(15.0), 12.5) and is_equal_approx(Arrows.homing_speed(10.0), 20.0) and is_equal_approx(Arrows.homing_speed(4.0), 20.0), "arrows: 10 m/s [15b]; Burst arrows 5 m/s beyond 20 m, ramping to 20 m/s at 10 m")
 	h.reset()
 	h.grant_immunity(INF, ["*"], -INF, "test") # the Ghoul's arrows are read from their log
 	wake(c, r, Vector3(6, 0, row), -90.0)
-	put_player(c, Vector3(31, 0, row)) # 25 m: in range, in sight
+	put_player(c, Vector3(26, 0, row)) # 20 m: in its 22 m range [Map 1 spec §4], in sight
 	await tree.physics_frame
 	c.arrows.reset()
 	var shot_times: Array = []
@@ -65,7 +65,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var first_three := shot_times.slice(0, 3)
 	var gap_burst: float = (float(first_three[2]) - float(first_three[0])) / 2.0 if first_three.size() == 3 else -1.0
 	var gap_normal: float = float(shot_times[4]) - float(shot_times[3]) if shot_times.size() >= 5 else -1.0
-	check.call(r.state == Sprite.State.CHASE and flat(r.global_position).distance_to(flat(Vector3(6, 0, row))) < 0.5 and r.bursts == 1, "at 25 m it holds its ground and draws (%d shots, %d Burst)" % [r.shots, r.bursts])
+	check.call(r.state == Sprite.State.CHASE and flat(r.global_position).distance_to(flat(Vector3(6, 0, row))) < 0.5 and r.bursts == 1, "at 20 m it holds its ground and draws (%d shots, %d Burst)" % [r.shots, r.bursts])
 	check.call(absf(gap_burst - 1.0 / 3.0) < 0.04 and absf(gap_normal - 1.0 / 1.5) < 0.04, "its first attack is a Burst: 3 arrows at double rate (%.2f s apart), then normal shots %.2f s apart" % [gap_burst, gap_normal])
 	var homing_ok: bool = burst_arrows.all(func(a): return is_equal_approx(float(a.amount), 35.0) and a.result != "blocked") and c.arrows.log.filter(func(a): return not a.homing).all(func(a): return is_equal_approx(float(a.amount), 70.0))
 	check.call(c.arrows.log.size() >= 4 and homing_ok and burst_arrows.size() == 3, "Burst arrows home in for 35 each; the rest fly straight for 70 (%d landed)" % c.arrows.log.size())
@@ -90,7 +90,7 @@ static func run(check: Callable, c: Node3D) -> void:
 			t_hit = i * DT
 			break
 	check.call(t_hit > 0.0 and c.arrows.log[0].result == "applied" and is_equal_approx(h.hp, 965.0), "a Burst arrow aimed 6 m off homes in and lands 35 (hp %.0f, %.1f s)" % [h.hp, t_hit])
-	# Keeps its distance: inside 10 m it backs off; beyond 30 m it closes in.
+	# Keeps its distance: inside 10 m it backs off; beyond 22 m it closes in.
 	wake(c, r, Vector3(30, 0, row), -90.0)
 	put_player(c, Vector3(37, 0, row)) # 7 m
 	await tree.physics_frame
@@ -103,7 +103,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	r._go(Sprite.State.CHASE)
 	steps(c, 1.0)
 	var closed: float = r.distance_to_player(p)
-	check.call(backed > 9.0 and closed < 39.0, "it backs off inside 10 m (7 -> %.1f m) and closes in beyond 30 m (40 -> %.1f m)" % [backed, closed])
+	check.call(backed > 9.0 and closed < 39.0, "it backs off inside 10 m (7 -> %.1f m) and closes in beyond 22 m (40 -> %.1f m)" % [backed, closed])
 	# Every player effect lands on it at full value.
 	c.effects.apply(r.enemy_id, "Burn", 5.0, s.run.time, "player", 1000.0)
 	c.effects.apply(r.enemy_id, c.projectiles.SCORCHED_SLOW.id, 2.0, s.run.time, "player")
@@ -113,12 +113,12 @@ static func run(check: Callable, c: Node3D) -> void:
 
 	# ---- Kostas Mortus ----------------------------------------------------------------------------
 	var m: CharacterBody3D = c.enemies["mortus_1"]
-	check.call(m.kind == "mortus" and m.health.max_hp == 3000.0 and m.damage == 80.0 and is_equal_approx(m.attack_interval, 2.0) and m.move_speed == 3.0 and m.aggro_r == 30.0 and m.deaggro_r == 50.0 and not m.can_climb and m.windup_r == 1.5 and m.kill_exp == 200 and m.resist == 0.5 and m.displace_immune, "Kostas Mortus: 3000 HP, 80 at 0.5/s, 3 m/s, detection 30 m, gives up past 50 m, range 1.5 m, cannot climb [15b], 200 EXP; effects halved, no knockback")
+	check.call(m.kind == "mortus" and m.health.max_hp == 3000.0 and m.damage == 80.0 and is_equal_approx(m.attack_interval, 2.0) and m.move_speed == 3.0 and m.aggro_r == 25.0 and m.deaggro_r == 35.0 and not m.can_climb and m.windup_r == 1.5 and m.kill_exp == 200 and m.resist == 0.5 and m.displace_immune, "Kostas Mortus: 3000 HP, 80 at 0.5/s, 3 m/s, detection 25 m, gives up past 35 m [Map 1 spec §4], range 1.5 m, cannot climb [15b], 200 EXP; effects halved, no knockback")
 	# No climbing [Sir, 2026-11-15b]: walking at the 2 m ledge (x 90-94, z 37-43) toward a
 	# player on top, it stays on the ground (a Sprite climbs it: test_r12).
 	h.reset()
 	wake(c, m, Vector3(92, 0, 48), 180.0)
-	put_player(c, Vector3(92, 2.0, 40)) # 8 m: inside detection, under the charge's 15 m
+	put_player(c, Vector3(92, 2.0, 40)) # 8 m: inside detection, under the charge's 12 m
 	await tree.physics_frame
 	m.alert_to(p.global_position)
 	var m_top := -INF
@@ -218,40 +218,22 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.restart()
 	await tree.physics_frame
 
-# The forest's placement: Sprite packs of up to 4, Ghoul pairs, one Mortus per page clearing, 12 idle Sprites awake.
+# Map 1's pool [spec §4]: nothing out at the camp; spawns bring kinds from the
+# pool (more are made when it runs out), and at most 12 idle Sprites stay awake.
 static func run_forest(check: Callable, c: Node3D) -> void:
 	var s = c.session
 	var tree: SceneTree = c.get_tree()
 	s.meta.reset()
 	s.restart()
 	await tree.physics_frame
-	var per_zone := {}
-	var ghoul_zone := {}
-	for e in c.enemies.values():
-		if e.reserve: continue
-		var best := -1
-		var bd := INF
-		for i in c.zones.size():
-			var d: float = flat(e.origin).distance_to(flat(c.zones[i].at))
-			if d < bd:
-				bd = d
-				best = i
-		if e.kind == "sprite": per_zone[best] = int(per_zone.get(best, 0)) + 1
-		elif e.kind == "ghoul": ghoul_zone[best] = int(ghoul_zone.get(best, 0)) + 1
-	var packs_ok: bool = not per_zone.is_empty() and per_zone.values().all(func(n): return n > 0 and n <= 4) and per_zone.keys().all(func(z): return int(z) % c.GHOUL_ZONE_EVERY != c.GHOUL_ZONE_EVERY - 1)
-	var pairs_ok: bool = not ghoul_zone.is_empty() and ghoul_zone.values().all(func(n): return n == 2) and ghoul_zone.keys().all(func(z): return int(z) % c.GHOUL_ZONE_EVERY == c.GHOUL_ZONE_EVERY - 1)
-	check.call(packs_ok and c.alive_count() <= c.FOREST_POPULATION, "the forest's Sprites stand in packs of up to 4 (%d packs)" % per_zone.size())
-	check.call(pairs_ok, "Forest Ghouls stand in pairs in every fourth zone (%d pairs)" % ghoul_zone.size())
-	var mortus: Array = c.enemies.values().filter(func(e): return e.kind == "mortus" and not e.reserve)
-	var clearings := {}
-	var guard_ok := true
-	for m in mortus:
-		var near_page := false
-		for id in c.page_spots:
-			if (c.page_spots[id] as Vector3).distance_to(m.origin) < 5.0: near_page = true
-		if not near_page: guard_ok = false
-		clearings[c.DarkForest.clearing_at(m.origin)] = true
-	check.call(mortus.size() >= 1 and mortus.size() <= c.MORTUS_MAX and clearings.size() == mortus.size() and guard_ok, "one Kostas Mortus guards each page clearing (%d, %d clearings)" % [mortus.size(), clearings.size()])
+	var pool := {"sprite": 0, "ghoul": 0, "mortus": 0}
+	for e in c.enemies.values(): pool[e.kind] += 1
+	check.call(c.alive_count() == 0 and pool.sprite >= int(c.M1_POOL.sprite) and pool.ghoul >= int(c.M1_POOL.ghoul) and pool.mortus >= int(c.M1_POOL.mortus), "Map 1 starts with every enemy in the pool (%d Sprites, %d Ghouls, %d Mortus): the camp is safe" % [pool.sprite, pool.ghoul, pool.mortus])
+	var n0: int = c.enemies.size()
+	var made := []
+	for i in int(c.M1_POOL.mortus) + 2: made.append(c._m1_place("mortus", c.player.global_position + Vector3(4.0 + 1.5 * i, 0, -12)))
+	check.call(c.enemies.size() == n0 + 2 and made.all(func(e): return e != null and e.kind == "mortus" and not e.reserve), "past the pool, more are made on demand (%d -> %d)" % [n0, c.enemies.size()])
+	for e in made: c._to_reserve(e)
 	for i in 30: s.step(DT)
 	var awake := 0
 	for e in c.enemies.values():

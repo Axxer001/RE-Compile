@@ -15,7 +15,7 @@ extends CanvasLayer
 #     and rank, location and world level, lifetime records. Back: the six
 #     stats with [+] per stat, chant tiers, Reset stats; while chanting the
 #     back is the Spell Chant (code, blanks, a hint after 10 s). Space flips it.
-# The Effects list is its own overlay on T (effects_panel.gd). The world keeps
+# The player's effects show on the held book's status page (page 5). The world keeps
 # running (Tab does not pause [Sir]) behind a 50% blur. All rules live in the
 # session's systems; this panel calls them and shows the result, so tests can
 # drive the same methods headless.
@@ -101,9 +101,8 @@ var chant_stat := ""           # Spell Chant: the stat being chanted for
 var problem := {}              # the current chant problem (ChantEngine.draw)
 var last_chant := {}           # stat -> key of the previous attempt's problem (never repeated)
 var chant_slots: Array = []    # the token placed in each blank ("" = empty; kept across rebuilds) [Sir, 2026-11-14: tap, don't type]
-var chant_bad := {}            # tokens a wrong try showed don't belong (greyed, still usable)
-var chant_right := []          # blanks a wrong try showed are right (green)
-var chant_wrong := []
+var reject_until := -1.0       # a wrong chant: the card shakes until this session time, then a new problem [Sir, 2026-11-21]
+const SHAKE_S := 0.36          # the rejection shake (the Unity port's: sin(t * 72) * (1 - t / 0.36) * 3 px)
 var chant_started := 0.0       # session time this chant's problem was drawn
 var hint_shown := false
 var hint_was_ready := false
@@ -240,10 +239,46 @@ func _stat_feedback(stat: String, ok: bool) -> void:
 	if ok:
 		target.scale = Vector2.ONE*1.12
 		t.tween_property(target,"scale",Vector2.ONE,0.45).set_trans(Tween.TRANS_SINE)
+		_sparkle(target)
 	else:
 		target.rotation = -0.025
 		t.tween_property(target,"rotation",0.0,0.38).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 
+
+## A raised stat's sparkle [Sir, 2026-11-21]: a few gold diamonds rise from the
+## value and fade over SPARKLE_S, then are freed. UI only. Sized for the card's
+## printed scale (600 px drawn, about a third of that on screen).
+const SPARKLE_S := 0.6
+const CHANT_SPARKLE_DELAY := 0.65 # the card's turn from the chant to the stats (inspection_stage: 0.42 s, then the 0.42 s flip from half-way)
+const SPARKLES := 8
+func _sparkle(target: Control) -> void:
+	var holder := Control.new()
+	holder.name = "StatSparkle"
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.set_meta("stat_cell", String(target.name))
+	# On the card face, over the value (not inside it: the value's green flash would tint them).
+	# The face is a container: the holder fills it, and the diamonds are offset to the value.
+	var face: Control = body.find_child("CardFace", true, false)
+	var origin := Vector2.ZERO
+	if face != null:
+		face.add_child(holder)
+		origin = target.get_global_rect().position - face.get_global_rect().position
+	else: target.add_child(holder)
+	for i in SPARKLES:
+		var d := ColorRect.new()
+		var sz := rng.randf_range(12.0, 18.0)
+		d.size = Vector2(sz, sz)
+		d.pivot_offset = d.size * 0.5
+		d.rotation = PI * 0.25
+		d.color = Color(0.91, 0.62, 0.13) if i % 2 == 0 else Color(1.0, 0.79, 0.3) # deep and bright gold: pale gold vanishes on the white card
+		d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		d.position = origin + Vector2(target.size.x * rng.randf_range(0.2, 0.8), target.size.y * rng.randf_range(0.3, 0.8)) - d.size * 0.5
+		holder.add_child(d)
+		var tw := d.create_tween().set_parallel(true)
+		var delay := rng.randf_range(0.0, 0.12)
+		tw.tween_property(d, "position:y", d.position.y - rng.randf_range(40.0, 70.0), SPARKLE_S - delay).set_delay(delay).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		tw.tween_property(d, "modulate:a", 0.0, SPARKLE_S - delay).set_delay(delay).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	holder.create_tween().tween_callback(holder.queue_free).set_delay(SPARKLE_S + 0.05)
 
 func setup(main: Node3D) -> void:
 	world = main
@@ -538,7 +573,7 @@ func allocate(stat: String) -> bool:
 	var ok: bool = session().stats.allocate(stat)
 	status_text = ("+1 %s" % STAT_LABELS.get(stat, stat)) if ok else ("No stat points to spend." if session().stats.unspent <= 0 else "%s is at its cap." % STAT_LABELS.get(stat, stat))
 	refresh()
-	if ok: _stat_feedback(stat,true)
+	if ok: _stat_feedback.call_deferred(stat, true) # the stat table is laid out next frame
 	return ok
 
 # Reset stats [Sir R4]: a first press arms it, the second resets (every stat to
@@ -585,9 +620,7 @@ func start_chant(stat: String) -> Dictionary:
 func _draw_chant() -> void:
 	problem = ChantEngine.draw(chant_level(chant_stat), session().meta.unlocked, rng, String(last_chant.get(chant_stat, "")))
 	last_chant[chant_stat] = problem.get("key", "")
-	chant_wrong = []
-	chant_right = []
-	chant_bad = {}
+	reject_until = -1.0
 	problem["choices"] = ChantEngine.choices(problem, session().meta.unlocked, rng) if not problem.is_empty() else []
 	chant_slots = []
 	for i in problem.get("answers", []).size(): chant_slots.append("")
@@ -618,6 +651,7 @@ func use_hint() -> String:
 var _hint_secs := -1
 func tick() -> void:
 	if not visible or mode != "chant": return
+	if rejecting() and session().run.time >= reject_until: finish_rejection()
 	var secs := ceili(hint_left())
 	if secs != _hint_secs:
 		_hint_secs = secs
@@ -629,7 +663,8 @@ func tick() -> void:
 		if wait != null and secs <= 0: wait.text = "Ready: press Hint to see which page to study."
 
 # Right: the stat's flat chant gain [R9] (no EXP), the stat's chant tier rises
-# (kept). Wrong: the streak resets, the same problem stays.
+# (kept). Wrong [Sir, 2026-11-21]: the streak resets, the card shakes, then a new
+# problem replaces it by itself (no Retry).
 func submit_chant(answers: Array) -> Dictionary:
 	if mode != "chant" or problem.is_empty(): return {"ok": false, "wrong": []}
 	var res: Dictionary = ChantEngine.check(problem, answers)
@@ -645,39 +680,58 @@ func submit_chant(answers: Array) -> Dictionary:
 		if world.has_method("show_notice"): world.show_notice("Chant: %s %s" % [STAT_LABELS.get(chant_stat, chant_stat), gain_text], 2.0)
 		mode = "browse"
 		problem = {}
+		reject_until = -1.0
+		refresh()
+		# The sparkle waits for the card to turn from the chant back to its stats side.
+		get_tree().create_timer(CHANT_SPARKLE_DELAY).timeout.connect(_stat_feedback.bind(chant_stat, true))
 	else:
 		session().progression.on_chant_fail()
-		chant_wrong = res.wrong
-		chant_right = []
-		for i in problem.answers.size():
-			if not i in res.wrong: chant_right.append(i)
-			elif i < answers.size() and String(answers[i]) != "" and not String(answers[i]) in problem.answers: chant_bad[String(answers[i])] = true
-		status_text = "Arcane fizzle: %d blank(s) wrong. Try again or cancel." % res.wrong.size()
+		status_text = "Arcane fizzle. A new chant takes its place."
 		if world.get("sfx") and world.sfx: world.sfx.play("click", world.player.global_position)
-	refresh()
-	_stat_feedback(chant_stat,res.ok)
+		reject_until = session().run.time + SHAKE_S
+		refresh()
+		_shake_card()
 	return res
 
-# ---- tapping tokens into the blanks [Sir, 2026-11-14] ----------------------------------------------
+## A wrong chant is being rejected: the card shakes, input waits.
+func rejecting() -> bool:
+	return reject_until >= 0.0
+
+## The shake is over: a new problem (never the same one twice in a row), blanks empty.
+func finish_rejection() -> void:
+	if not rejecting() or mode != "chant": return
+	_draw_chant()
+	status_text = ChantEngine.PLATEAU_HINT if problem.get("plateau", false) else "Fill in the blanks."
+	refresh()
+
+## The rejection: the card swings side to side, dying away over SHAKE_S.
+func _shake_card() -> void:
+	var face: Control = body.find_child("CardFace", true, false)
+	if face == null: return
+	var x0 := face.position.x
+	var t := face.create_tween()
+	t.tween_method(_shake_step.bind(face, x0), 0.0, SHAKE_S, SHAKE_S)
+	t.tween_callback(_shake_step.bind(SHAKE_S, face, x0))
+
+func _shake_step(k: float, face: Control, x0: float) -> void:
+	if is_instance_valid(face): face.position.x = x0 + sin(k * 72.0) * (1.0 - k / SHAKE_S) * 3.0
+
+# ---- tapping tokens into the blanks [Sir, 2026-11-14; 2026-11-21] ----------------------------------
 # A choice fills the first empty blank; tapping a filled blank empties it. The
-# code above shows each placed token in its blank. Chant is enabled once every
-# blank holds a token. A wrong try turns the right blanks green and the wrong
-# ones red, and greys the tokens that belong nowhere (they stay usable).
+# code above shows each placed token in its blank. Filling the last blank submits
+# the chant at once (no Chant button).
 func choose(token: String) -> int:
-	if mode != "chant" or problem.is_empty(): return -1
+	if mode != "chant" or problem.is_empty() or rejecting(): return -1
 	var i := chant_slots.find("")
 	if i < 0: return -1
 	chant_slots[i] = token
-	chant_wrong.erase(i)
-	chant_right.erase(i)
-	refresh()
+	if slots_full(): submit_slots()
+	else: refresh()
 	return i
 
 func clear_slot(i: int) -> void:
-	if i < 0 or i >= chant_slots.size(): return
+	if i < 0 or i >= chant_slots.size() or rejecting(): return
 	chant_slots[i] = ""
-	chant_wrong.erase(i)
-	chant_right.erase(i)
 	refresh()
 
 func slots_full() -> bool:
@@ -712,15 +766,7 @@ func _chant_slots_row(col: VBoxContainer) -> void:
 		b.custom_minimum_size = Vector2(170, 56)
 		b.add_theme_font_override("font", mono)
 		b.add_theme_font_size_override("font_size", 24)
-		var fill := Color("fbfaf6")
-		var edge := CARD_INK
-		if i in chant_wrong:
-			fill = Color("f6d6d0")
-			edge = MAROON
-		elif i in chant_right:
-			fill = Color("d4efd2")
-			edge = Color("2f7a35")
-		for st in ["normal", "hover", "pressed", "focus"]: b.add_theme_stylebox_override(st, _box(fill, edge, 2, 4, 8))
+		for st in ["normal", "hover", "pressed", "focus"]: b.add_theme_stylebox_override(st, _box(Color("fbfaf6"), CARD_INK, 2, 4, 8))
 		for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]: b.add_theme_color_override(fc, CARD_INK)
 		b.tooltip_text = "Tap to empty this blank"
 		b.pressed.connect(clear_slot.bind(i))
@@ -742,23 +788,22 @@ func _chant_choices(col: VBoxContainer) -> void:
 		b.custom_minimum_size = Vector2(150, 52)
 		b.add_theme_font_override("font", mono)
 		b.add_theme_font_size_override("font_size", 24)
-		var bad: bool = chant_bad.has(String(tok))
-		var fill := Color("cfcabd") if bad else Color("efe6cc")
-		for st in ["normal", "focus"]: b.add_theme_stylebox_override(st, _box(fill, CARD_INK, 2, 4, 8))
+		for st in ["normal", "focus"]: b.add_theme_stylebox_override(st, _box(Color("efe6cc"), CARD_INK, 2, 4, 8))
 		b.add_theme_stylebox_override("hover", _box(Color("f7efd6"), BRASS, 2, 4, 8))
 		b.add_theme_stylebox_override("pressed", _box(Color("f7efd6"), BRASS, 3, 4, 8))
-		for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]: b.add_theme_color_override(fc, Color("6b665c") if bad else CARD_INK)
-		b.disabled = slots_full()
+		for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]: b.add_theme_color_override(fc, CARD_INK)
+		b.disabled = slots_full() or rejecting()
 		b.pressed.connect(func() -> void: choose(String(tok)))
 		grid.add_child(b)
 
 func cancel_chant() -> void:
 	mode = "browse"
 	problem = {}
+	reject_until = -1.0
 	refresh()
 
 func show_tab(which: String) -> void:
-	if not which in VIEWS: return # the Effects list is its own overlay on T [Sir]
+	if not which in VIEWS: return # effects live on the held book's page 5
 	var switching: bool = which != tab
 	if switching:
 		status_text = ""
@@ -1750,20 +1795,8 @@ func _card_chant(col: VBoxContainer) -> void:
 	act.alignment = BoxContainer.ALIGNMENT_CENTER
 	act.add_theme_constant_override("separation", 16)
 	col.add_child(act)
-	var go := _button(act, "Chant")
-	go.name = "ChantGo"
-	go.add_theme_font_size_override("font_size", 24)
-	go.disabled = not slots_full()
-	go.pressed.connect(submit_slots)
-	if not chant_wrong.is_empty():
-		var retry := _button(act,"Retry")
-		retry.name = "ChantRetry"
-		retry.pressed.connect(func() -> void:
-			for i in chant_wrong: chant_slots[i] = ""
-			chant_wrong.clear()
-			status_text = "Replace the missing tokens."
-			refresh())
-	var cb := _button(act, "Cancel")
+	var cb := _button(act, "Cancel") # the chant submits itself when the last blank fills: only Hint and Cancel [Sir, 2026-11-21]
+	cb.name = "ChantCancel"
 	cb.add_theme_font_size_override("font_size", 24)
 	cb.pressed.connect(cancel_chant)
 	var hb := _button(act, "Hint" if hint_ready() else "Hint (in %d s)" % ceili(hint_left()))

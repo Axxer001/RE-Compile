@@ -14,7 +14,7 @@ const BODY_HIGH := 1.7
 var body_high := BODY_HIGH # per grid: a crouching player fits under 1.3 m, a standing enemy does not
 
 var cell_size := CELL
-var surface: RefCounted
+var surface: Object       # anything with height_at(Vector2): the forest terrain, Map 1 (a Node)
 var origin := Vector2.ZERO   # world x/z of cell (0, 0) corner
 var size := Vector2i.ZERO
 var astar := AStarGrid2D.new()

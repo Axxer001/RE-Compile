@@ -1,20 +1,21 @@
 extends "res://scripts/actors/blighted_sprite.gd"
 # Forest Ghoul [Common] [Sir, 2026-11-15; docs/plan-dark-forest-roster.md]:
 #   ranged; 250 HP, 70 damage an arrow, attack speed 1.5/s, 5 m/s, detection
-#   50 m with line of sight, range 30 m, arrows 10 m/s (enemy_arrows.gd).
+#   35 m with line of sight, range 22 m, arrows 10 m/s (enemy_arrows.gd).
 #   [Sir 2026-11-15b] renamed from Forest Ranger; gives up past 100 m; cannot climb.
-#   Keeps 15-30 m from the player and backs off inside 10 m.
+#   Keeps 12-22 m from the player and backs off inside 10 m.
 #   Burst: on its first attack, then every 20 s: attack speed +100% and its
 #   next 3 shots are homing arrows of 35 damage (5 -> 20 m/s as they close).
-# Model: the Quaternius base body in a ghoul's outfit, with a bow built in code
-# (no bow mesh is installed). UAL1/UAL2 have no bow clips, so the aim pose is
-# Pistol_Aim_Neutral and the release Pistol_Shoot (checked 2026-11-15).
+# Model: the approved Ashveil Retro archer [asset swap 2026-11-24]: one skinned
+# GLB with its own bow, quiver, 29-bone rig and bow clips, replacing the Quaternius
+# body and the longbow that used to be built in code. The right hand holds the Bow
+# bone, the left pulls the Nock and the shaft points down local +Z; EnemyArrows
+# still fires exactly one gameplay projectile per release (unchanged).
 
-const BodyModelR = preload("res://scripts/actors/body_model.gd")
-const OutfitBuilderR = preload("res://scripts/actors/outfit_builder.gd")
-const GHOUL := {"hp": 250.0, "damage": 70.0, "attack_speed": 1.5, "speed": 5.0, "detect": 50.0, "range": 30.0, "deaggro": 100.0,
-	"keep_min": 15.0, "back_off": 10.0, "burst_every": 20.0, "burst_arrows": 3, "burst_damage": 35.0, "burst_speed_mult": 2.0, "kill_exp": 35}
-const GHOUL_SKIN := Color(0.78, 0.6, 0.45)
+const HostileModelsR = preload("res://scripts/actors/hostile_models.gd")
+const GHOUL := {"hp": 250.0, "damage": 70.0, "attack_speed": 1.5, "speed": 5.0, "detect": 35.0, "range": 22.0, "deaggro": 45.0, # [Map 1 spec §4: scaled to the 30 m fog]
+	"keep_min": 12.0, "back_off": 10.0, "burst_every": 20.0, "burst_arrows": 3, "burst_damage": 35.0, 	"burst_speed_mult": 2.0, "kill_exp": 35}
+
 
 var arrows: RefCounted          # EnemyArrows (main sets it)
 var next_shot := 0.0            # sim time the next arrow may leave
@@ -39,59 +40,14 @@ func _init() -> void:
 	kill_exp = GHOUL.kill_exp
 
 func _build_model() -> void:
-	var outfit := {"polo": OutfitBuilderR.fabric(Color(0.2, 0.32, 0.18), Color(0.12, 0.1, 0.06), 0.0, 3),
-		"trousers": OutfitBuilderR.fabric(Color(0.3, 0.22, 0.14), Color(0.15, 0.1, 0.06), 0.0, 4),
-		"shoes": OutfitBuilderR.fabric(Color(0.18, 0.12, 0.08), Color(0.08, 0.06, 0.04), 0.0, 5)}
-	var built: Dictionary = BodyModelR.build(self, false, GHOUL_SKIN, outfit)
+	var built: Dictionary = HostileModelsR.build(HostileModelsR.GHOUL_PATH, HostileModelsR.GHOUL_CLIPS, self)
 	model = built.model
-	anim = built.anim # the shared UAL library: idle, walk, jog, death, climb, aim, shoot
-	var body := OutfitBuilderR.body_mesh(model)
-	_skin = body.get_surface_override_material(0) as BaseMaterial3D
-	if _skin:
-		_skin_emission = _skin.emission
-		_skin_energy = _skin.emission_energy_multiplier
-	_attach_bow()
+	anim = built.anim
+	_use_skins(built.skins)
 	_add_eyes()
 
-# A longbow in the left hand: two curved limbs and a string, built in code.
-func _attach_bow() -> void:
-	var skel: Skeleton3D = model.find_children("*", "Skeleton3D", true, false)[0] if not model.find_children("*", "Skeleton3D", true, false).is_empty() else null
-	if skel == null or skel.find_bone("hand_l") < 0: return
-	var att := BoneAttachment3D.new()
-	att.name = "BowHand"
-	att.bone_name = "hand_l"
-	skel.add_child(att)
-	var bow := Node3D.new()
-	bow.name = "Bow"
-	att.add_child(bow)
-	var wood := StandardMaterial3D.new()
-	wood.albedo_color = Color(0.36, 0.22, 0.1)
-	wood.roughness = 0.8
-	for side in [-1.0, 1.0]: # upper and lower limbs, bent back at the tips
-		for k in 3:
-			var seg := MeshInstance3D.new()
-			var cyl := CylinderMesh.new()
-			cyl.top_radius = 0.012 - k * 0.002
-			cyl.bottom_radius = 0.016 - k * 0.002
-			cyl.height = 0.24
-			seg.mesh = cyl
-			seg.material_override = wood
-			var y: float = side * (0.12 + k * 0.22)
-			seg.position = Vector3(0, y, -0.03 * k * k * 0.5)
-			seg.rotation.x = side * 0.18 * k
-			bow.add_child(seg)
-	var string := MeshInstance3D.new()
-	var sc := CylinderMesh.new()
-	sc.top_radius = 0.002
-	sc.bottom_radius = 0.002
-	sc.height = 1.28
-	string.mesh = sc
-	var sm := StandardMaterial3D.new()
-	sm.albedo_color = Color(0.85, 0.82, 0.7)
-	string.material_override = sm
-	string.position = Vector3(0, 0, -0.1)
-	bow.add_child(string)
-	bow.rotation = Vector3(0, 0, PI * 0.5)
+# The longbow, its limbs and its string are part of the approved model: nothing is
+# built in code any more (the old _attach_bow is gone with the body it hung on).
 
 func reset_to(at: Vector3, yaw_deg: float, heard := -1) -> void:
 	super.reset_to(at, yaw_deg, heard)
@@ -136,7 +92,7 @@ func think(delta: float, now: float, ctx: Dictionary) -> void:
 		_:
 			super.think(delta, now, ctx)
 
-# Away from the player, keeping 15-30 m.
+# Away from the player, keeping 12-22 m.
 func _back_off(p: CharacterBody3D, delta: float, nav: RefCounted) -> void:
 	var away := Vector3(global_position.x - p.global_position.x, 0, global_position.z - p.global_position.z)
 	away = away.normalized() if away.length() > 0.01 else -facing

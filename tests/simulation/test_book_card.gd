@@ -239,7 +239,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var bar: VScrollBar = lsc.get_v_scroll_bar()
 	var llab: Label = lsc.find_child("ChantCode", true, false)
 	check.call(absf(gp.view_rect("CardFace").size.y - front_h) < 1.0 and llab.size.y > lsc.size.y and bar.max_value > lsc.size.y and llab.get_theme_font_size("font_size") == gp.CHANT_MIN_FONT, "a long question scrolls inside its box (text %.0f px in a %.0f px box); the card keeps its size" % [llab.size.y, lsc.size.y])
-	s.meta.chant_tier["max_hp"] = 0
+	s.meta.chant_tier["max_hp"] = 1 # two blanks: one placed token does not submit the chant (the last one does)
 	gp._draw_chant()
 	gp.refresh()
 	p0 = gp.problem

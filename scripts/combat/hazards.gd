@@ -21,6 +21,7 @@ var fires: Array = []       # {id, at, until, next: {target_id: time}, node}
 var explosions: Array = []  # {id, at, time, hits: [{id, amount, result}]} (log for tests/HUD)
 var fire_ticks: Array = []  # {fire_id, target, amount, time}
 var root: Node3D            # parent for visuals
+var ground_fn: Callable      # (Vector2) -> the ground's height there (Map 1 has hills); unset: a flat floor at 0
 var _serial := 0
 
 func reset() -> void:
@@ -70,7 +71,7 @@ func tick(delta: float, now: float, ctx: Dictionary) -> void:
 		for t in ctx.targets:
 			if t.health.dead: continue
 			var flat := Vector2(t.pos.x - f.at.x, t.pos.z - f.at.z).length()
-			if flat > FIRE.radius + t.radius or t.pos.y - f.at.y > 2.0: continue
+			if flat > FIRE.radius + t.radius or t.pos.y - f.at.y > 2.0 or f.at.y - t.pos.y > 2.0: continue
 			if now + 1e-6 < float(f.next.get(t.id, -INF)): continue
 			f.next[t.id] = now + FIRE.tick
 			var result: String = t.health.apply(DamagePacket.new(CombatController.next_id(), f.id, "hazard", FIRE.damage, "fire"), now)
@@ -82,7 +83,8 @@ func _drop(rec: Dictionary) -> void:
 
 func _ignite(at: Vector3, now: float, ctx: Dictionary) -> void:
 	_serial += 1
-	var f := {"id": "fire_%d" % _serial, "at": Vector3(at.x, 0.0, at.z), "until": now + FIRE.duration, "next": {}, "node": _fire_visual(at)}
+	var gy: float = float(ground_fn.call(Vector2(at.x, at.z))) if ground_fn.is_valid() else 0.0 # on the ground under the burst
+	var f := {"id": "fire_%d" % _serial, "at": Vector3(at.x, gy, at.z), "until": now + FIRE.duration, "next": {}, "node": _fire_visual(Vector3(at.x, gy, at.z))}
 	fires.append(f)
 	if ctx.has("noise"): ctx.noise.emit_noise(f.at, FIRE.noise, "fire", "hazard", now)
 
@@ -123,7 +125,7 @@ func _throw_visual(item: String) -> Node3D:
 func _fire_visual(at: Vector3) -> Node3D:
 	if root == null: return null
 	var n := Node3D.new()
-	n.position = Vector3(at.x, 0.02, at.z)
+	n.position = Vector3(at.x, at.y + 0.02, at.z)
 	var disc := MeshInstance3D.new()
 	var c := CylinderMesh.new(); c.top_radius = FIRE.radius; c.bottom_radius = FIRE.radius; c.height = 0.04
 	disc.mesh = c

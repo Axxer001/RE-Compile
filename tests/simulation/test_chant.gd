@@ -98,7 +98,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var bad := []
 	for a in prob.answers: bad.append("nope")
 	var r1: Dictionary = gp.submit_chant(bad)
-	check.call(not r1.ok and pr.chant_streak == 0 and gp.problem.key == prob.key and st.points.magic_pow == 0 and gp.mode == "chant", "wrong: fizzle, the streak resets, the same problem stays")
+	check.call(not r1.ok and pr.chant_streak == 0 and gp.problem.key == prob.key and st.points.magic_pow == 0 and gp.mode == "chant", "wrong: fizzle, the streak resets; the problem stays while the card shakes, then a new one replaces it")
 	var lvl0: int = pr.level
 	var exp0: int = pr.exp
 	var r2: Dictionary = gp.submit_chant(prob.answers)

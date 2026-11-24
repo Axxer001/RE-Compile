@@ -90,6 +90,7 @@ var sun: DirectionalLight3D
 var dummies: Array = []       # {id, body, health, label, base, strafe, pos, total, last_hit_t, hits}
 var boards: Array = []        # {id, body, health, mat, dist, hits, flash}
 var forest_portal: Node3D
+var forest_open := true          # the camp's portal is there (Map 1 unloads the camp behind the player)
 var return_portal: Node3D
 var _portal_ready_at := 0.0
 var _locked_notice_at := -INF
@@ -121,7 +122,7 @@ func build(world: Node3D) -> void:
 	return_portal = _portal(field, RETURN_PORTAL, 0.0, "ReturnPortal")
 	_label(field, "TO THE FOREST", RETURN_PORTAL + Vector3(0, PORTAL_SIZE.y + 0.6, 0), 0.012)
 	forest_portal = _portal(self, FOREST_PORTAL, 90.0, "ForestPortal")
-	_label(self, "TRAINING FIELD", FOREST_PORTAL + Vector3(0, PORTAL_SIZE.y + 0.6, 0), 0.012)
+	_label(forest_portal, "TRAINING FIELD", Vector3(0, PORTAL_SIZE.y + 0.6, 0), 0.012) # on the portal: it goes with it
 	field.visible = false
 
 # ---- the field ------------------------------------------------------------------------------
@@ -367,6 +368,15 @@ func _portal(parent: Node3D, at: Vector3, yaw: float, nm: String) -> Node3D:
 			_solid(holder, c, size, null, "frame_col")
 	return holder
 
+## The camp's portal with the camp [Sir, 2026-11-22]: Map 1 unloads the camp 22 m into
+## Pathway #0, and the corridor may later pass near the camp's spot. Off: hidden (frame,
+## sign and all), not solid, not walked through. A new run turns it back on.
+func set_forest_portal(on: bool) -> void:
+	forest_open = on
+	if forest_portal == null: return
+	forest_portal.visible = on
+	for cs in forest_portal.find_children("*", "CollisionShape3D", true, false): (cs as CollisionShape3D).disabled = not on
+
 func portal_open() -> bool:
 	return not main.director.in_combat
 
@@ -383,7 +393,7 @@ func check_portals(now: float) -> String:
 	if p.health.dead: return ""
 	var open := portal_open()
 	_tint_portals(open)
-	var near_forest := _flat(p.global_position).distance_to(_flat(FOREST_PORTAL)) < PORTAL_R and not active
+	var near_forest := _flat(p.global_position).distance_to(_flat(FOREST_PORTAL)) < PORTAL_R and not active and forest_open
 	var near_return := _flat(p.global_position).distance_to(_flat(ORIGIN + RETURN_PORTAL)) < PORTAL_R and active
 	if not (near_forest or near_return): return ""
 	if now < _portal_ready_at: return ""

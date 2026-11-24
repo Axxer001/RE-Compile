@@ -36,12 +36,7 @@ extends CharacterBody3D
 
 const DamagePacket = preload("res://scripts/combat/damage_packet.gd")
 const Health = preload("res://scripts/combat/health_component.gd")
-const OutfitBuilder = preload("res://scripts/actors/outfit_builder.gd")
-const BODY := "res://assets/quaternius/base_characters/Superhero_Male_FullBody.gltf"
-const ANIMS := "res://assets/quaternius/animations/UAL1_Standard.glb"
-const BodyModel = preload("res://scripts/actors/body_model.gd")
-const SKIN_TINT := Color(0.32, 0.22, 0.42) # blighted violet
-const Look = preload("res://scripts/render/look.gd")
+const HostileModels = preload("res://scripts/actors/hostile_models.gd")
 # Glowing eyes [graphics direction 2026-11-20]: silhouettes read in the dense fog.
 const EYE_COLOR := Color(0.85, 1.0, 0.35)
 const EYE_ENERGY := 4.0
@@ -52,8 +47,8 @@ enum State { IDLE_ROAM, CHASE, WINDUP, STRIKE, DISENGAGE, DEAD, CHARGE, DIVE, ST
 
 const HP := 500.0             # [Sir 2026-11-15]
 const SPEED := 9.0            # [Sir 2026-11-15] m/s
-const POUNCE_MIN := 5.0       # [design 2026-11-15b] no pounce this close (it just walks in to bite)
-const POUNCE_R := 10.0        # [Sir 2026-11-15b] a pounce starts within this, in sight
+const POUNCE_MIN := 10.0      # [Map 1 spec §4, 2026-11-20: ranges scaled to the 30 m fog] no pounce this close (it just walks in to bite)
+const POUNCE_R := 15.0        # [Map 1 spec §4] a pounce starts within this, in sight
 const CHARGE_S := 2.0         # [Sir 2026-11-15b] the crouch before the dash
 const DIVE_SPEED := 20.0      # [Sir 2026-11-15] straight jump-dash
 const DIVE_MAX := 22.0        # [design] metres: to where the player was, plus a little
@@ -62,8 +57,8 @@ const POUNCE_COOLDOWN_S := 15.0 # [Sir 2026-11-15b]
 const DIVE_HIT_R := 0.9       # [design] centre distance that counts as touching the player
 const CONCUSS_S := 1.5        # [Sir]
 const CONCUSS_MULT := 0.2     # [Sir] -80% Mov Spd and Atk Spd
-const AGGRO_R := 50.0         # [Sir 2026-11-15] detection, with line of sight
-const DEAGGRO_R := 80.0       # [Sir 2026-11-15b] gives up past this
+const AGGRO_R := 35.0         # [Map 1 spec §4] detection, with line of sight
+const DEAGGRO_R := 45.0       # [Map 1 spec §4] loses track past this
 const WINDUP_R := 1.5         # [Sir 2026-11-15b] attack range: starts the telegraph
 const WINDUP_S := 0.35        # [spec]
 const ATTACK_INTERVAL := 1.0  # [Sir 2026-11-15] attack speed 1.00 per second
@@ -174,27 +169,13 @@ func setup(id: String, at: Vector3, yaw_deg: float) -> void:
 	reset_to(origin, origin_yaw)
 
 func _build_model() -> void:
-	# The Quaternius base body (CC0), bare and tinted: a blighted forest creature.
-	model = (load(BODY) as PackedScene).instantiate()
-	model.name = "Model"
-	model.rotation.y = PI # Quaternius bodies face +Z; this body faces -Z
-	add_child(model)
-	var body := OutfitBuilder.body_mesh(model)
-	var skin: BaseMaterial3D = body.mesh.surface_get_material(0).duplicate()
-	skin.albedo_color = Look.palette_tint(SKIN_TINT, 0.3)
-	Look.matte(skin)
-	skin.emission_enabled = true
-	skin.emission = Color(0.35, 0.1, 0.45)
-	skin.emission_energy_multiplier = 0.25
-	body.set_surface_override_material(0, skin)
-	_skin = skin
-	_skin_emission = skin.emission
-	_skin_energy = skin.emission_energy_multiplier
-	anim = AnimationPlayer.new()
-	anim.name = "Anim"
-	model.add_child(anim)
-	anim.root_node = NodePath("..")
-	anim.add_animation_library("", _library())
+	# The approved Blighted Sprite [asset swap 2026-11-24]: one skinned GLB whose
+	# claw scratch, all-fours anticipation and airborne clips replace the Quaternius
+	# body and the UAL stand-ins. Gameplay and collision are untouched.
+	var built: Dictionary = HostileModels.build(HostileModels.SPRITE_PATH, HostileModels.SPRITE_CLIPS, self)
+	model = built.model
+	anim = built.anim
+	_use_skins(built.skins)
 	_add_eyes()
 
 var eye_mesh: MeshInstance3D   # the glowing eyes (tests)
@@ -303,26 +284,40 @@ var embers: Node3D # Burn: Binbun flames on the body (12 ember particles without
 var burning := false
 var burn_full := true # presentation: the nearest burning Sprites wear the flames; the rest glow and flicker [2026-11-14]
 var _skin: BaseMaterial3D
+var _skins: Array = [] # every surface material (the swapped models are multi-surface)
 var _skin_emission := Color.BLACK
 var _skin_energy := 0.0
+
+# The swap's models carry one material per surface: a burn or slow glows on all of
+# them, and the first surface's look is what a restore returns to.
+func _use_skins(list: Array) -> void:
+	_skins = list
+	if _skins.is_empty(): return
+	_skin = _skins[0]
+	_skin_emission = _skin.emission
+	_skin_energy = _skin.emission_energy_multiplier
+
+func _set_emission(color: Color, energy: float) -> void:
+	for m in (_skins if not _skins.is_empty() else ([_skin] if _skin != null else [])):
+		(m as BaseMaterial3D).emission = color
+		(m as BaseMaterial3D).emission_energy_multiplier = energy
 func set_burning(on: bool, full := true) -> void:
 	if on and burning and full != burn_full: # still burning, moved in or out of the flames' nearest set
 		burn_full = full
 		_show_embers(full)
-		if full and _skin != null: _skin.emission_energy_multiplier = BURN_GLOW
+		if full and _skin != null: _set_emission(_skin.emission, BURN_GLOW)
 		return
 	if on == burning: return
 	burning = on
 	burn_full = full
 	_show_embers(on and full)
 	if _skin != null:
-		_skin.emission = Color(1.0, 0.45, 0.12) if on else _skin_emission
-		_skin.emission_energy_multiplier = BURN_GLOW if on else _skin_energy
+		_set_emission(Color(1.0, 0.45, 0.12) if on else _skin_emission, BURN_GLOW if on else _skin_energy)
 
 # Without flames, the glow flickers (0.15-0.3) so a far burning Sprite still reads as burning.
 func burn_flicker(now: float) -> void:
 	if not burning or burn_full or _skin == null: return
-	_skin.emission_energy_multiplier = BURN_GLOW * (0.75 + 0.25 * sin(now * 13.0 + float(get_instance_id() % 97)))
+	_set_emission(_skin.emission, BURN_GLOW * (0.75 + 0.25 * sin(now * 13.0 + float(get_instance_id() % 97))))
 
 func _show_embers(on: bool) -> void:
 	if embers == null and on:
@@ -370,28 +365,9 @@ func _build_embers() -> void:
 func bar_fraction() -> float:
 	return hp_fill.region_rect.size.x / BAR_W if hp_fill else 1.0
 
-static var _lib: AnimationLibrary
 # Presentation-only randomness (idle start phase) has its own generator so it can
 # never consume draws from the global sequence gameplay code uses.
 static var _anim_rng := RandomNumberGenerator.new()
-# Movement clips [Sir: rig + movement animation; attacks later]. Built from the
-# shared UAL1+UAL2 library (BodyModel.library): roam = zombie idle/shamble,
-# chase = sprint, pounce charge = crouch, dive = airborne, climb = ClimbUp.
-# "strike" stays Punch_Jab until attack animations are done.
-const SPRITE_CLIPS := {"idle": "zombie_idle", "walk": "zombie_walk", "run": "run", "strike": "bite",
-	"death": "death", "charge": "crouch", "air": "jump_air", "climb": "climb", "land": "land",
-	"pounce_start": "jump_start", "stride": "walk"} # stride: the plain Walk (Kostas Mortus, slowed) # Pounce: UAL NinjaJump_Start / _Idle / _Land [Sir 2026-11-15]
-static func _library() -> AnimationLibrary:
-	if _lib != null: return _lib
-	_lib = AnimationLibrary.new()
-	var shared: AnimationLibrary = BodyModel.library()
-	for key in SPRITE_CLIPS:
-		var src: String = SPRITE_CLIPS[key]
-		if not shared.has_animation(src): src = "walk" if key in ["idle", "walk"] else "idle"
-		var a: Animation = shared.get_animation(src).duplicate()
-		if key == "climb": a.loop_mode = Animation.LOOP_LINEAR # held while scaling a face
-		_lib.add_animation(key, a)
-	return _lib
 
 # Back to its origin, alive and roaming. `origin_at` moves the origin (tests, spawns).
 var dormant := false
@@ -555,7 +531,7 @@ func think(delta: float, now: float, ctx: Dictionary) -> void:
 			elif _walk_to(origin, move_speed, delta, ctx.nav):
 				_go(State.IDLE_ROAM)
 
-# Pounce range [Sir 2026-11-15b]: 5-10 m, off cooldown, not climbing.
+# Pounce range [Map 1 spec §4]: 10-15 m, off cooldown, not climbing.
 func can_pounce(d: float, now: float) -> bool:
 	return d >= POUNCE_MIN and d <= POUNCE_R and now + 1e-6 >= pounce_ready and not climbing
 

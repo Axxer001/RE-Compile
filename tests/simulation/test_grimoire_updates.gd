@@ -54,6 +54,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	# ---- the Spell Chant: tap, don't type ---------------------------------------------------------
 	gp.show_tab("player_id")
 	s.stats.unspent = 0
+	s.meta.chant_tier["magic_pow"] = 1 # two blanks: one can be placed and emptied before the last one submits
 	gp.start_chant("magic_pow")
 	var pr: Dictionary = gp.problem
 	var ch: Array = pr.get("choices", [])
@@ -62,21 +63,39 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(gp.mode == "chant" and ch.size() == Chant.CHOICES_MAX and uniq.size() == ch.size() and pr.answers.all(func(a): return a in ch), "the chant offers %d ready-typed choices, the answers among them: %s" % [ch.size(), str(ch)])
 	var choice_btns: Array = gp.page_control("ChantChoices").get_children()
 	var slot_btns: Array = gp.page_control("ChantSlots").get_children()
-	check.call(choice_btns.size() == ch.size() and slot_btns.size() == pr.answers.size() and gp.page_control("blank_1") == null and (gp.page_control("ChantGo") as Button).disabled, "the card shows the blanks and the choice buttons (no typing box); Chant waits until every blank is filled")
+	check.call(choice_btns.size() == ch.size() and slot_btns.size() == pr.answers.size() and gp.page_control("blank_1") == null, "the card shows the blanks and the choice buttons (no typing box)")
+	# [Sir, 2026-11-21, the Unity flow]: no Chant or Retry button, only Hint and Cancel.
+	var cancel_btn: Control = gp.page_control("ChantCancel")
+	check.call(gp.page_control("ChantGo") == null and gp.page_control("ChantRetry") == null and gp.page_control("Hint") != null and cancel_btn != null, "the chant's only buttons are Hint and Cancel")
 	var decoy: String = String(ch.filter(func(t): return not t in pr.answers)[0])
 	(gp.page_control("ChantChoices").get_child(ch.find(decoy)) as Button).pressed.emit()
 	check.call(gp.chant_slots[0] == decoy and gp.slot_lines().any(func(l): return String(l).contains("[%s]" % decoy)), "tapping a choice fills the first blank; the code shows it in place")
 	(gp.page_control("slot_1") as Button).pressed.emit()
 	check.call(gp.chant_slots[0] == "", "tapping a filled blank empties it")
-	for i in pr.answers.size(): gp.choose(decoy)
-	var streak0: int = s.progression.chant_streak
-	var r1: Dictionary = gp.submit_slots()
-	check.call(not r1.ok and gp.chant_wrong.size() == pr.answers.size() and gp.chant_bad.has(decoy) and gp.problem.key == pr.key, "a wrong try: the blanks turn red, the decoy greys out, the same chant stays")
-	for i in gp.chant_slots.size(): gp.clear_slot(i)
-	for a in pr.answers: gp.choose(String(a))
+	s.progression.chant_streak = 2
+	for i in pr.answers.size(): gp.choose(decoy) # the last pick submits by itself
+	check.call(s.progression.chant_streak == 0 and gp.rejecting() and gp.mode == "chant", "filling the last blank submits at once; a wrong answer fizzles (the streak resets) and the card shakes")
+	gp.finish_rejection()
+	check.call(gp.problem.get("key", "") != pr.key and not gp.chant_slots.is_empty() and not gp.chant_slots.has(decoy) and gp.mode == "chant" and not gp.rejecting(), "after the shake a new chant replaces it by itself, the blanks empty")
+	var pr2: Dictionary = gp.problem
 	var pow0: float = s.stats.value("magic_pow", s.run.time)
-	var r2: Dictionary = gp.submit_slots()
-	check.call(r2.ok and s.stats.value("magic_pow", s.run.time) > pow0 and gp.mode == "browse", "the right tokens in the blanks: the chant takes hold")
+	for a in pr2.answers: gp.choose(String(a))
+	check.call(s.stats.value("magic_pow", s.run.time) > pow0 and gp.mode == "browse", "the right tokens in the blanks: the chant takes hold the moment the last one is placed")
+	var csp: Node = null
+	var t_wait := Time.get_ticks_msec()
+	while csp == null and Time.get_ticks_msec() - t_wait < 3000: # once the card has turned to its stats (CHANT_SPARKLE_DELAY)
+		await tree.process_frame
+		csp = gp.body.find_child("StatSparkle", true, false)
+	var waited := (Time.get_ticks_msec() - t_wait) / 1000.0
+	check.call(csp != null and csp.get_meta("stat_cell", "") == "value_magic_pow", "a successful chant sparkles over the raised stat, once the card shows it (after %.2f s)" % waited)
+	s.stats.unspent = 1
+	await tree.process_frame
+	await tree.process_frame
+	gp.allocate("max_hp")
+	await tree.process_frame
+	await tree.process_frame
+	var sp: Node = gp.body.find_child("StatSparkle", true, false)
+	check.call(sp != null and sp.get_meta("stat_cell", "") == "value_max_hp", "spending a stat point sparkles over that stat")
 	s.handle_action("grimoire")
 
 # Page pickups [Sir, 2026-11-14]: within 5 m, no need to look at the page.
@@ -88,11 +107,7 @@ static func run_pages(check: Callable, c: Node3D) -> void:
 	await tree.physics_frame
 	c.park_enemies()
 	var p: CharacterBody3D = c.player
-	var id := ""
-	for k in c.page_pickups:
-		if not s.grimoire.is_found(k) and c.page_pickups[k].visible:
-			id = k
-			break
+	var id: String = c.drop_page(c.player.global_position + Vector3(0, 0, -8)) # Map 1: pages drop from enemies [spec §3]
 	var pk: Node3D = c.page_pickups[id]
 	var spot: Vector3 = pk.global_position - Vector3(0, 0.6, 0)
 	p.global_position = spot + Vector3(0, 0, 6.5) # 6.5 m away, looking straight at it

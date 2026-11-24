@@ -44,7 +44,10 @@ func _new_run_state() -> void:
 	progression.rank = meta.rank
 	progression.ranked.connect(_on_ranked)
 	progression.leveled.connect(_on_leveled) # a method, not a lambda: no session <-> progression cycle
+	# Map 1 [Sir, 2026-11-20; spec §1]: death returns to the camp with the found pages kept.
+	var kept: Array = grimoire.found.keys() if grimoire != null and world != null and bool(world.get("keeps_found_pages")) else []
 	grimoire = Grimoire.new(meta)
+	for id in kept: grimoire.found[id] = true
 
 func _on_leveled(l: int, _points: int) -> void:
 	meta.note_level(l)
@@ -95,8 +98,6 @@ func handle_action(action: String) -> void:
 			world.on_pause_changed(paused())
 		"grimoire_opened":
 			_call("show_grimoire")
-		"effects_opened":
-			_call("show_effects")
 		"overlay_closed":
 			_call("hide_overlays")
 

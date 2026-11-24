@@ -86,15 +86,15 @@ static func run(check: Callable, c: Node3D) -> void:
 	h.reset()
 	s.stats.modifiers.clear()
 	sh.reset_to(Vector3(60, 0, 59), 180.0) # facing away: any facing
-	put_player(c, Vector3(60, 0.5, 50)) # 9 m away, half a metre up (a small jump)
+	put_player(c, Vector3(60, 0.5, 46)) # 13 m away (the pounce's 10-15 m [Map 1 spec §4]), half a metre up (a small jump)
 	await tree.physics_frame
 	sh.alert_to(p.global_position)
-	var top: float = hold(c, Vector3(60, 0.5, 50), 3.0, true) # the 2 s crouch, then the dash
+	var top: float = hold(c, Vector3(60, 0.5, 46), 3.0, true) # the 2 s crouch, then the dash
 	check.call(sh.pounces == 1 and sh.pounce_hits == 1 and is_equal_approx(h.hp, 940.0) and top < 1.0, "a player half a metre up: the low dash (Sprite up to %.2f m) still lands the pounce (hp %.0f)" % [top, h.hp])
-	# High ground: the player on the 3 m ledge, the Sprite 9 m out on the ground: the dash stays low.
+	# High ground: the player on the 3 m ledge, the Sprite 13 m out on the ground: the dash stays low.
 	h.reset()
 	s.stats.modifiers.clear()
-	sh.reset_to(Vector3(98, 0, 49.5), 0.0)
+	sh.reset_to(Vector3(98, 0, 53.5), 0.0)
 	put_player(c, Vector3(98, 3.0, 40.5))
 	await tree.physics_frame
 	sh.alert_to(p.global_position)
@@ -109,12 +109,12 @@ static func run(check: Callable, c: Node3D) -> void:
 	# Still dodgeable: a sidestep after the launch makes it miss and stop where its line ends.
 	h.reset()
 	sh.reset_to(Vector3(60, 0, 59), 180.0)
-	put_player(c, Vector3(60, 0, 50))
+	put_player(c, Vector3(60, 0, 46))
 	await tree.physics_frame
 	sh.alert_to(p.global_position)
-	hold(c, Vector3(60, 0, 50), 2.05)
+	hold(c, Vector3(60, 0, 46), 2.05)
 	var dove: bool = sh.state == Sprite.State.DIVE
-	hold(c, Vector3(63, 0, 50), 1.2)
+	hold(c, Vector3(63, 0, 46), 1.2)
 	check.call(dove and sh.pounces == 1 and sh.pounce_hits == 0 and h.hp >= 970.0 and sh.state != Sprite.State.DIVE, "a sidestep after the launch: the dash misses and ends (a melee strike may follow, hp %.0f)" % h.hp)
 
 	# ---- climbing [R12] -------------------------------------------------------------------------

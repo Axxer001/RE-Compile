@@ -36,6 +36,11 @@ func _ready() -> void:
 	add_child(main)
 	run.call_deferred(main)
 
+# Map 1 [2026-11-20]: the first combat chunk's centre (an open field in the fog).
+static func field(c: Node3D) -> Vector3:
+	var ch: Dictionary = c.map1.chunk if not c.map1.chunk.is_empty() else c.map1.next_chunk
+	return ch.centre
+
 func frame() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -80,6 +85,7 @@ static func changed_pixels(a: Image, b: Image) -> int:
 	return diff
 
 func place(c: Node3D, at: Vector3, yaw_deg: float, pitch_deg := 0.0) -> void:
+	if c.map1 and not (c.training and c.training.active) and at.distance_to(c.training.ORIGIN) > 400.0: at.y = c.map1.height_at(Vector2(at.x, at.z)) # Map 1 has hills: stand on them
 	c.player.global_position = at
 	c.player.velocity = Vector3.ZERO
 	c.player.yaw = deg_to_rad(yaw_deg)
@@ -136,7 +142,7 @@ func run(c: Node3D) -> void:
 	check(changed_pixels(still1, still2) == 0, "grain off: an unchanged view captures identically (%d changed)" % changed_pixels(still1, still2))
 	check(stats.max - stats.min > 0.15, "first-person view has real contrast (%.2f..%.2f)" % [stats.min, stats.max])
 	# Cultivate from the first person: a soft cyan aura by the wand, never a screen-filling flash.
-	place(c, Vector3(75, 0, 55), 0.0)
+	place(c, field(c), 0.0)
 	c.pcombat.cultivate_until = -INF
 	await frame()
 	var cult_off := shot("fp-cultivate-off.png")
@@ -156,7 +162,7 @@ func run(c: Node3D) -> void:
 	var pcs: Node3D = c.pcombat
 	var sp: RefCounted = c.spells
 	c.park_enemies()
-	place(c, Vector3(75, 0, 55), 0.0)
+	place(c, field(c), 0.0)
 	await frame()
 	var calm := shot("fp-spell-calm.png")
 	for id in ["dragons_breath", "firefly", "explosion"]: c.session.meta.unlock(id) # Render fixture grants.
@@ -171,14 +177,14 @@ func run(c: Node3D) -> void:
 	# Side view: the flames already in the air stay where they are (world space).
 	for gp in c.find_children("*", "GPUParticles3D", true, false):
 		if gp.get_parent() != null and String(gp.get_parent().name) == "DragonsBreath": gp.emitting = false
-	place(c, Vector3(75 + 14, 0, 55 - 9), 90.0) # 14 m east of the cone's middle, looking west across it
+	place(c, field(c) + Vector3(14, 0, -9), 90.0) # 14 m east of the cone's middle, looking west across it
 	await frame()
 	shot("fp-dragons-breath-side.png")
 	var covered_b: int = changed_pixels(calm, breath_shot)
 	var total_b: int = (calm.get_width() / 16) * (calm.get_height() / 16)
 	sp.reset()
 	var foe: CharacterBody3D = c.enemies.values()[0]
-	foe.reset_to(Vector3(75, 0, 43), 0.0)
+	foe.reset_to(field(c) + Vector3(0, 0, -12), 0.0)
 	foe.inert = true
 	await frame()
 	sp.start_firefly(c.session.grimoire.page("firefly"), c.session.run.time)
@@ -188,7 +194,7 @@ func run(c: Node3D) -> void:
 	var firefly_shot := shot("fp-firefly.png")
 	sp.reset()
 	c.park_enemies()
-	c.vfx.cataclysm(Vector3(75, 0, 15), c.session.run.time) # 40 m up the path
+	c.vfx.cataclysm(field(c) + Vector3(0, 0, -40), c.session.run.time) # 40 m ahead
 	for i in 12: await frame()
 	var cata_shot := shot("fp-explosion.png")
 	c.vfx.reset()
@@ -198,7 +204,7 @@ func run(c: Node3D) -> void:
 	# The Phoenix set: Flight's 50 m landing ring from 30 m up, Call's three areas.
 	c.park_enemies()
 	var sv: RefCounted = c.spells
-	var ring_at := Vector3(75, 0, 70)
+	var ring_at: Vector3 = field(c) + Vector3(0, 0, 15)
 	var big: Node3D = c.vfx.ring(ring_at, sv.FLIGHT.ring_r, Color(1.0, 0.45, 0.1))
 	place(c, ring_at + Vector3(0, 30, 0), 0.0, -60.0)
 	await frame()
@@ -209,8 +215,8 @@ func run(c: Node3D) -> void:
 	var ring_none := shot("fp-phoenix-ring-off.png")
 	big.queue_free()
 	var areas: Array = []
-	for off in [Vector3(-8, 0, -12), Vector3(0, 0, -18), Vector3(9, 0, -13)]: areas.append(c.vfx.ring(Vector3(75, 0, 70) + off, sv.CALL.area_r, Color(1.0, 0.35, 0.1)))
-	place(c, Vector3(75, 0, 72), 0.0, -18.0)
+	for off in [Vector3(-8, 0, -12), Vector3(0, 0, -18), Vector3(9, 0, -13)]: areas.append(c.vfx.ring(field(c) + Vector3(0, 0, 15) + off, sv.CALL.area_r, Color(1.0, 0.35, 0.1)))
+	place(c, field(c) + Vector3(0, 0, 17), 0.0, -18.0)
 	await frame()
 	await frame()
 	var call_shot := shot("fp-phoenix-call-rings.png")
@@ -221,7 +227,7 @@ func run(c: Node3D) -> void:
 	# Pocket Change and Heavy Pockets on enemies, the die, the Jackpot, Addiction.
 	c.park_enemies()
 	var gb: RefCounted = c.gambler
-	var gs_at := Vector3(75, 0, 72)
+	var gs_at: Vector3 = field(c) + Vector3(0, 0, 17)
 	place(c, gs_at, 0.0, -4.0)
 	await frame()
 	var g_calm := shot("fp-gambler-calm.png")
@@ -355,20 +361,22 @@ func run(c: Node3D) -> void:
 	c.park_enemies()
 	check(day_l > night_l + 0.1, "the Training Field is in daylight (view luma %.3f, the forest at night %.3f)" % [day_l, night_l])
 
-	# Phase 4: a lost page is a Fantasy Props scroll, glowing on the forest floor.
-	var qs: Vector3 = c.page_spots.quick_step
+	# Phase 4: a lost page is a Fantasy Props scroll, glowing on the forest floor (Map 1: dropped by an enemy).
+	var qs: Vector3 = field(c) + Vector3(0, 0, -6)
+	var dropped_id: String = c.drop_page(qs)
 	place(c, qs + Vector3(0, 0, 1.6), 0.0, -30.0)
 	await frame()
 	var page_shot := shot("fp-page-scroll.png")
-	var pg_node: Node3D = c.page_pickups.quick_step
+	var pg_node: Node3D = c.page_pickups[dropped_id]
 	pg_node.visible = false
 	await frame()
 	var no_page := shot("fp-page-hidden.png")
 	pg_node.visible = true
 	check(distinct(page_shot, no_page), "a lost page (the scroll) is visible on the forest floor")
+	c.notices.clear() # "A page fell!": the sky check below reads the screen
 	# The Silent Hill 2 night [graphics direction 2026-11-20]: no sky; looking up shows
 	# only the fog's colour (no void, no band, no stars).
-	place(c, c.spawn.at, 0.0, 80.0)
+	place(c, field(c), 0.0, 80.0)
 	c.pcombat.rig.visible = false # the held book's parchment is not the sky
 	await frame()
 	var sky_shot := shot("fp-sky.png")
@@ -384,7 +392,7 @@ func run(c: Node3D) -> void:
 			if lm > 0.5: bright += 1
 	check(bright == 0 and hi_l - lo_l < 0.06 and luma(sky_shot, 0.3) > 0.03 and luma(sky_shot, 0.3) < 0.2, "overhead: one flat fog colour, no stars or void (luma %.3f, spread %.3f)" % [luma(sky_shot, 0.3), hi_l - lo_l])
 	# Fog and background are one colour: a wall at 35 m (past the 30 m fog end, inside the 40 m far clip) vanishes.
-	place(c, c.spawn.at, 0.0, 0.0)
+	place(c, field(c), 0.0, 0.0)
 	var flames_f: Node3D = c.find_child("CampFlames", true, false)
 	if flames_f: flames_f.visible = false # the flames and the book's live ink animate between shots
 	c.pcombat.rig.visible = false
@@ -416,19 +424,21 @@ func run(c: Node3D) -> void:
 	var lo: CanvasLayer = c.lofi
 	var full := Vector2i(get_viewport().get_visible_rect().size)
 	check(lo.viewport.size == full and not c.art.post.shader.code.contains("colour16") and not c.art.post.shader.code.contains("low_res") and c.art.post.shader.code.contains("uniform float saturation = 0.7") and not lo.grain.visible, "the world renders at native resolution %s; post = grain, 30%% desaturation, vignette" % lo.viewport.size)
-	# The forest near, mid and far: tropical trees, faceted and nearest-filtered, fading into the fog.
-	var kit_t: Node = c.find_child("KitTrees", true, false)
-	var kinds := {}
-	if kit_t:
-		for g in kit_t.find_children("*", "MultiMeshInstance3D", true, false):
-			kinds[String(g.name).get_slice("@", 0)] = true
-	check(kinds.has("Narra") and kinds.has("Mango") and kinds.has("Banana") and kinds.has("Bamboo") and not kinds.has("Pine_5") and not kinds.has("DeadTree_1"), "the forest is Narra, Mango, Banana and Bamboo (no pines) %s" % str(kinds.keys()))
-	var tr0: Array = c.map.trees[0]
-	var tree_at := Vector3(tr0[0], c.map.terrain.height_at(Vector2(tr0[0], tr0[1])), tr0[1])
+	# Map 1's look [layout pass §1-§3]: the field all grass and a few rocks, bamboo
+	# culms along the pathways; near, mid and far, fading into the fog.
+	var ch1: Dictionary = c.map1.chunk if not c.map1.chunk.is_empty() else c.map1.next_chunk
+	var tile0: Node3D = ch1.tiles[Vector2i.ZERO]
+	var grass_mm: Array = tile0.find_children("*", "MultiMeshInstance3D", true, false).filter(func(g): return ch1.grass.values().has((g as MultiMeshInstance3D).multimesh))
+	var bamboo_mm: Array = c.map1.find_children("*Bamboo*", "MultiMeshInstance3D", true, false)
+	var cards := 0
+	for g in grass_mm: cards += (g as MultiMeshInstance3D).multimesh.instance_count
+	check(ch1.layout.trees.is_empty() and cards > 15000 and not bamboo_mm.is_empty() and ch1.layout.rocks.size() >= 6, "Map 1: the field is grass (%d cards a tile) and %d rocks, no trees; bamboo culms along the pathways" % [cards, ch1.layout.rocks.size()])
+	var rk0: Array = ch1.layout.rocks[0]
+	var tree_at: Vector3 = (ch1.centre as Vector3) + Vector3(rk0[0], 0, rk0[1]) # a rock: the field's only cover
 	var lums := []
 	for dist in [4.0, 14.0, 26.0]:
-		var stand := tree_at + Vector3(0, 0, dist)
-		stand.y = c.map.terrain.height_at(Vector2(stand.x, stand.z))
+		var stand: Vector3 = tree_at + Vector3(0, 0, dist)
+		stand.y = c.map1.height_at(Vector2(stand.x, stand.z))
 		place(c, stand, 0.0, 8.0)
 		c.pcombat.rig.visible = false
 		await frame()
@@ -443,9 +453,9 @@ func run(c: Node3D) -> void:
 		for ch in att.get_children():
 			if ch is MeshInstance3D and String(ch.name) in ["EyeL", "EyeR"]: eyes.append(ch)
 	c.park_enemies([fog_foe.enemy_id])
-	place(c, c.spawn.at, 0.0, 0.0)
+	place(c, field(c), 0.0, 0.0)
 	var foe_at: Vector3 = c.player.global_position + Vector3(0, 0, -14.0)
-	foe_at.y = c.map.terrain.height_at(Vector2(foe_at.x, foe_at.z)) # on the ground, not under the hill
+	foe_at.y = c.map1.height_at(Vector2(foe_at.x, foe_at.z))
 	fog_foe.reset_to(foe_at, 180.0)
 	fog_foe.inert = true
 	fog_foe.visible = true
@@ -475,7 +485,7 @@ func run(c: Node3D) -> void:
 	check(eyes.size() == 2 and eye_px.call(foe_fog) > eye_px.call(foe_dark) + 20, "a Sprite 14 m out in the fog: its two glowing eyes show (%d eyes, brightest green %d, %d without)" % [eyes.size(), eye_px.call(foe_fog), eye_px.call(foe_dark)])
 	# The wand light: a warm ~15 m cone ahead and a soft glow at the tip.
 	var lamp: SpotLight3D = c.pcombat.wand.lamp
-	place(c, tree_at + Vector3(0, 0, 6.0), 0.0, 0.0)
+	place(c, tree_at + Vector3(0, 0, 1.8 + float(rk0[3]) * 0.5), 0.0, -12.0) # Map 1: a rock close ahead
 	await frame()
 	var lamp_on := shot("fp-wand-light.png")
 	lamp.visible = false
@@ -539,28 +549,92 @@ func run(c: Node3D) -> void:
 	var p1 := sk.get_bone_pose_position(bone)
 	sh.anim.seek(0.4, true)
 	var p2 := sk.get_bone_pose_position(bone)
-	check(bone >= 0 and not p1.is_equal_approx(p2), "Quaternius walk clip drives the body skeleton")
+	check(bone >= 0 and not p1.is_equal_approx(p2), "the approved walk clip drives the body skeleton")
+	# Asset swap 2026-11-24: the approved GLB replaces the Quaternius body and its
+	# violet skin tint; every surface is nearest-filtered like the rest of the game.
 	var skin: BaseMaterial3D = OutfitBuilderRef.body_mesh(sh.model).get_surface_override_material(0)
-	var Look = load("res://scripts/render/look.gd")
-	check(skin != null and skin.albedo_color.is_equal_approx(Look.palette_tint(sh.SKIN_TINT, 0.3)) and skin.emission_enabled and is_equal_approx(skin.roughness, 1.0), "the Sprite wears its blighted violet skin, muted toward the earthy palette, matte")
+	check(skin != null and skin.texture_filter == BaseMaterial3D.TEXTURE_FILTER_NEAREST, "the Sprite wears the approved model's nearest-filtered skin (%s)" % sh.model.name)
 	await frame()
 	shot("fp-sprite-run.png")
 	c.session.restart()
 
-	# Forest views, as the player first sees them.
+	# Map 1 views, as the player first sees them [spec §1-§3].
 	c.park_enemies()
-	place(c, Vector3(75.0, 0, 70.0), 0.0, -4.0) # the stones: 1/2/3 m ledges, from the south
+	place(c, c.spawn.at, 0.0, 0.0) # the camp, facing the forest entrance
+	c._map1_step(0.0, c.session.run.time) # the camp's own light fog (the runner does not step the world)
+	for i in 3: await frame()
+	var to_forest := shot("fp-m1-camp-forest.png")
+	place(c, c.spawn.at, 180.0, -6.0) # behind the camp: the path down to the town in the valley
+	c._map1_step(0.0, c.session.run.time)
+	for i in 3: await frame()
+	var to_town := shot("fp-m1-camp-town.png")
+	var town_n: Node3D = c.map1.get_node_or_null("Town")
+	var houses: Array = (town_n.find_children("house_*", "Node3D", false, false) + town_n.find_children("Keep", "Node3D", false, false)) if town_n else []
+	for h in houses: h.visible = false
 	await frame()
-	var stones := shot("fp-stones.png")
-	place(c, Vector3(75.0, 0, 108.0), 0.0, 2.0) # the crossing and the paths out of it
-	await frame()
-	var crossing := shot("fp-crossing.png")
-	place(c, Vector3(45.0, 0, 50.0), 0.0, 0.0) # the north-west glade (Ring of Fire)
-	await frame()
-	shot("fp-ring-glade.png")
-	place(c, Vector3(90.0, 0, 115.0), -60.0, 4.0) # off the path, into the trees
-	await frame()
-	shot("fp-deep-trees.png")
+	var no_town := shot("fp-m1-camp-town-hidden.png")
+	for h in houses: h.visible = true
+	check(distinct(to_forest, to_town) and exact_diff(to_town, no_town) > 20, "the camp: the forest entrance ahead, the town's houses in view in the valley behind (%d samples)" % exact_diff(to_town, no_town))
+	var pw0: Dictionary = c.map1.pathways[0]
+	var pw_at: Vector3 = c.map1.path_point(pw0.pts, 12.0)
+	place(c, pw_at, 0.0, 0.0) # Pathway #0, lined with bamboo
+	for i in 3: await frame()
+	c._map1_step(0.0, c.session.run.time)
+	shot("fp-m1-pathway.png")
+	# The sharpest seeded bend of Pathway #0: no sky through the bamboo, no stems in the lane.
+	var bend_i := 1
+	var bend_x := 0.0
+	for i in range(1, pw0.pts.size()):
+		var dl: Vector3 = pw0.pts[i] - pw0.pts[i - 1]
+		if absf(dl.x) > bend_x:
+			bend_x = absf(dl.x)
+			bend_i = i
+	var bd: Vector3 = pw0.pts[bend_i] - pw0.pts[bend_i - 1]
+	place(c, pw0.pts[bend_i - 1], rad_to_deg(atan2(-bd.x, -bd.z)), 2.0)
+	c._map1_step(0.0, c.session.run.time)
+	for i in 3: await frame()
+	var bend_shot := shot("fp-m1-bend.png")
+	var top_l := luma(bend_shot.get_region(Rect2i(0, 0, bend_shot.get_width(), bend_shot.get_height() / 6)), 1.0)
+	check(top_l < 0.2, "the sharpest bend: dark bamboo overhead, no bright sky or curtain through it (top luma %.3f)" % top_l)
+	var lane_clear := true
+	for st in c.map1.find_children("Bamboo", "MultiMeshInstance3D", true, false):
+		var mmb: MultiMesh = (st as MultiMeshInstance3D).multimesh
+		for k in range(0, mmb.instance_count, 7):
+			var xf: Transform3D = mmb.get_instance_transform(k)
+			var up: Vector3 = xf.basis.y # the culm's axis (its length)
+			var o: Vector3 = xf.origin - up.normalized() * (up.length() * 0.5 - 0.3 - 1.6) # the stem at eye height
+			if float(c.map1.path_project(pw0.pts, o).gap) < c.map1.WALL_OFF: lane_clear = false
+	check(lane_clear, "no bamboo stems inside the lane")
+	place(c, field(c) + Vector3(0, 0, 20), 0.0, 2.0) # the combat chunk: grass, hills, a few rocks
+	c._map1_step(0.0, c.session.run.time)
+	for i in 3: await frame()
+	shot("fp-m1-field.png")
+	# A crest and a hollow, then the fog moving while standing still [layout pass §4-§5].
+	var crest_at: Vector3 = field(c)
+	var hollow_at: Vector3 = field(c) + (ch1.hollows[0] as Vector3) * Vector3(1, 0, 1)
+	var best := -INF
+	for k in 30:
+		var q: Vector3 = field(c) + Vector3(-15.0 + k, 0, 0)
+		var hq: float = c.map1.height_at(Vector2(q.x, q.z))
+		if hq > best:
+			best = hq
+			crest_at = q
+	place(c, crest_at, 90.0, -4.0)
+	c._map1_step(0.0, c.session.run.time)
+	for i in 3: await frame()
+	shot("fp-m1-crest.png")
+	place(c, hollow_at + Vector3(0, 0, 7), 0.0, -2.0)
+	c.pcombat.rig.visible = false # the held book's live ink and the wand sway: only the fog may change
+	for i in 30:
+		c._map1_step(1.0 / 60.0, c.session.run.time)
+		await RenderingServer.frame_post_draw
+	var fog_a := shot("fp-m1-hollow.png")
+	for i in 300:
+		c._map1_step(1.0 / 60.0, c.session.run.time)
+		await RenderingServer.frame_post_draw
+	var fog_b := shot("fp-m1-fog-moved.png")
+	c.pcombat.rig.visible = true
+	check(changed_pixels(fog_a, fog_b) > 30 and c.map1.fog.sheets_live() > 0, "the fog moves while standing still (%d samples change in 5 s; %d sheets drifting)" % [changed_pixels(fog_a, fog_b), c.map1.fog.sheets_live()])
 	# Settings menu: the pause menu and the settings panel draw above the art post layer.
 	var pm: CanvasLayer = c.pause_menu
 	c._unhandled_key_input(_esc_event())
@@ -578,7 +652,6 @@ func run(c: Node3D) -> void:
 	check(pm.visible and pm.layer > post_layers.max() and pm.panel.layer > pm.layer and distinct(menu_shot, settings_shot), "pause menu (layer %d) and settings panel (%d) drawn above the post layer %s" % [pm.layer, pm.panel.layer, post_layers])
 	pm.back(); pm.back()
 	await frame()
-	check(distinct(stones, crossing) and luma(stones) > 0.02 and luma(crossing) > 0.02, "forest clearings render lit and distinct (%.3f, %.3f)" % [luma(stones), luma(crossing)])
 	c.session.restart()
 
 	# P7 HUD: bars, action bar and mission drawn over the world; the death panel centred.
@@ -607,12 +680,14 @@ func run(c: Node3D) -> void:
 
 	# Fire zones (the base for fireball AOE and Burn) light the floor.
 	c.park_enemies()
-	place(c, Vector3(75, 0, 55), 0.0)
+	place(c, field(c), 0.0)
 	c.player.pitch = deg_to_rad(-25.0) # looking down at the floor where the fire goes
 	c.player.apply_look()
 	await frame()
 	var bare := shot("fp-unarmed.png")
-	c.hazards._ignite(Vector3(75, 0, 53), c.session.run.time, {"targets": []})
+	var fire_at: Vector3 = field(c) + Vector3(0, 0, -2)
+	fire_at.y = c.map1.height_at(Vector2(fire_at.x, fire_at.z))
+	c.hazards._ignite(fire_at, c.session.run.time, {"targets": []})
 	c.publish(0.0)
 	await frame()
 	var fire := shot("fp-fire.png")
@@ -621,7 +696,7 @@ func run(c: Node3D) -> void:
 
 	# P2: a fireball in flight is drawn and lights its surroundings; a special's burst too.
 	c.park_enemies()
-	place(c, Vector3(75, 0, 55), 0.0)
+	place(c, field(c), 0.0)
 	await frame()
 	var clear_view := shot("fp-no-fireball.png")
 	var cam: Camera3D = c.player.camera
@@ -661,7 +736,7 @@ func run(c: Node3D) -> void:
 	c.session.restart() # no Ring of Fire or other spell left in view
 	c.park_enemies()
 	c.art.set_grain(0.0)
-	place(c, Vector3(75, 0, 55), 0.0, 0.0)
+	place(c, field(c), 0.0, 0.0)
 	for i in 50: await frame() # the equip lift (0.72 s) settles
 	var with_rig := shot("fp-held-right.png")
 	rig.visible = false
@@ -714,7 +789,7 @@ func run(c: Node3D) -> void:
 	shot("fp-held-cast.png")
 	check(rig.wand.glowing(), "a cast lights the wand's tip")
 	c.projectiles.reset()
-	place(c, Vector3(75, 0, 55), 0.0, -75.0)
+	place(c, field(c), 0.0, -75.0)
 	await frame()
 	shot("fp-look-down.png")
 	check(c.player.get_node_or_null("Body") == null and (rig.wand.find_children("*", "GeometryInstance3D", true, false) + rig.book.find_children("*", "GeometryInstance3D", true, false)).all(func(m): return (m as GeometryInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF), "no player body; the book and wand cast no shadow")
@@ -852,19 +927,6 @@ func run(c: Node3D) -> void:
 	c.session.restart()
 	c.session.restart()
 
-	# The Effects list on T, with a buff on: its icon sits in a 48 px tile.
-	c.pcombat.ready_at.erase("spell_2")
-	c.pcombat.use_slot("spell_2", Vector2.ZERO, c.session.run.time)
-	c.session.handle_action("effects_tab")
-	c.publish(0.0)
-	await frame()
-	await frame()
-	shot("fp-effects-t.png")
-	var tile: Control = c.effects_panel.list.find_child("Tile", true, false)
-	check(tile != null and tile.size.x <= 52.0 and tile.size.y <= 52.0, "the T panel's icon draws at its 48 px tile (%s)" % (str(tile.size) if tile else "none"))
-	c.session.handle_action("effects_tab")
-	c.session.restart()
-
 	# The Dark Forest roster [docs/plan-dark-forest-roster.md]: a Forest Ghoul with
 	# its bow, Kostas Mortus with its void aura, and both kinds of arrow in flight.
 	var ghouls: Array = c.enemies.values().filter(func(e): return e.kind == "ghoul")
@@ -872,7 +934,7 @@ func run(c: Node3D) -> void:
 	check(not ghouls.is_empty() and not morti.is_empty(), "the forest has Forest Ghouls (%d) and Kostas Mortus (%d)" % [ghouls.size(), morti.size()])
 	if not ghouls.is_empty() and not morti.is_empty():
 		c.park_enemies([ghouls[0].enemy_id, morti[0].enemy_id])
-		var rs_at := Vector3(75, 0, 72)
+		var rs_at: Vector3 = field(c) + Vector3(0, 0, 17)
 		place(c, rs_at, 0.0, -4.0)
 		ghouls[0].visible = false
 		morti[0].visible = false
@@ -885,8 +947,10 @@ func run(c: Node3D) -> void:
 			f.visible = true
 		for i in 6: await frame()
 		var roster_shot := shot("fp-roster-ghoul-mortus.png")
-		var bow: Node = ghouls[0].find_child("Bow", true, false)
-		check(bow != null and exact_diff(roster_none, roster_shot) > roster_shot.get_width() * roster_shot.get_height() / 20000, "a Forest Ghoul (bow in hand) and Kostas Mortus are drawn (%d px changed)" % exact_diff(roster_none, roster_shot))
+		# Asset swap 2026-11-24: the bow is a bone of the approved model, not a node built in code.
+		var ghoul_sk: Skeleton3D = ghouls[0].model.find_children("*", "Skeleton3D", true, false)[0]
+		var bow: int = ghoul_sk.find_bone("Bow")
+		check(bow >= 0 and exact_diff(roster_none, roster_shot) > roster_shot.get_width() * roster_shot.get_height() / 20000, "a Forest Ghoul (bow in hand) and Kostas Mortus are drawn (%d px changed, bow bone %d)" % [exact_diff(roster_none, roster_shot), bow])
 		ghouls[0].visible = false
 		morti[0].visible = false
 		var eye_r: Vector3 = c.player.camera.global_position

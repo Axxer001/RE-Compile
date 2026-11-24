@@ -12,11 +12,11 @@ const SLOTS := 2 # primary + secondary binding per action
 const LAYOUT := 4 # key layout version: 1 = shooter, 2 = Grimoire (docs/pivot-grimoire-plan.md §3), 3 = + Effects tab on T [R14], 4 = held grimoire: 1-5 pages, Q/E unbound [2026-11-20]; older saved bindings are dropped
 # Rebindable actions in menu order; pause/confirm stay fixed (Esc/Enter).
 const ACTIONS := ["move_forward", "move_back", "move_left", "move_right", "jump", "crouch", "dash",
-	"attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact", "grimoire", "effects_tab"]
+	"attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact", "grimoire"]
 const LABELS := {"move_forward": "Forward", "move_back": "Back", "move_left": "Left", "move_right": "Right",
 	"jump": "Jump / Double jump", "crouch": "Crouch / Slide", "dash": "Dash", "attack": "Cast", "special": "Special",
 	"page_1": "Page 1", "page_2": "Page 2", "page_3": "Page 3", "page_4": "Page 4", "page_5": "Status page", "toggle_book": "Close / open held book",
-	"interact": "Interact", "grimoire": "Grimoire", "effects_tab": "Effects"}
+	"interact": "Interact", "grimoire": "Grimoire"}
 
 const DEFAULT_HIP := 0.12 # degrees per pixel (the old fps_controller constant)
 const DEFAULT_ADS := 0.8

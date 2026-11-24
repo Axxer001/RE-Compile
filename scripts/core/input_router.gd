@@ -11,7 +11,7 @@ extends RefCounted
 enum Context { GAMEPLAY, OVERLAY, PAUSE, DEATH, EXTRACTION }
 
 const ACTIONS := ["move_forward", "move_left", "move_back", "move_right", "dash", "crouch", "jump",
-	"attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact", "grimoire", "effects_tab", "pause", "confirm"]
+	"attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact", "grimoire", "pause", "confirm"]
 # Held/edge intents sampled every tick (everything else is a discrete press).
 # Q closes or reopens the held book; E is unbound [Sir, 2026-11-20]: 1-4 turn the held grimoire, 5 opens its status page.
 const HELD := ["dash", "crouch", "jump", "attack", "special", "page_1", "page_2", "page_3", "page_4", "page_5", "toggle_book", "interact"]
@@ -133,14 +133,6 @@ func press(action: String) -> String:
 				open_overlay("grimoire")
 				return "grimoire_opened"
 			if context == Context.OVERLAY and overlay == "grimoire":
-				close_overlay()
-				return "overlay_closed"
-			return ""
-		"effects_tab": # T toggles the Effects overlay [R14]
-			if context == Context.GAMEPLAY:
-				open_overlay("effects")
-				return "effects_opened"
-			if context == Context.OVERLAY and overlay == "effects":
 				close_overlay()
 				return "overlay_closed"
 			return ""

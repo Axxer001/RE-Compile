@@ -6,7 +6,9 @@ extends Node3D
 
 const GameSession = preload("res://scripts/core/game_session.gd")
 const Greybox = preload("res://scripts/world/greybox.gd")       # the movement arena (tests)
-const DarkForest = preload("res://scripts/world/dark_forest.gd") # the game world [P7]
+const DarkForest = preload("res://scripts/world/dark_forest.gd") # the forest's kit and props library
+const Map1World = preload("res://scripts/world/map1_world.gd")   # the game world: Map 1, the Dark Forest [Sir, 2026-11-20]
+const Map1Rules = preload("res://scripts/core/map1_rules.gd")
 const GrassFieldScript = preload("res://scripts/world/grass_field.gd")
 const SpellService = preload("res://scripts/combat/spell_service.gd")
 const GamblerService = preload("res://scripts/combat/gambler_service.gd")
@@ -23,7 +25,6 @@ const DeathPanel = preload("res://scripts/ui/death_panel.gd")
 const LoFiView = preload("res://scripts/render/lofi_view.gd")
 const Interactable3D = preload("res://scripts/world/interactable3d.gd")
 const Hud = preload("res://scripts/ui/hud.gd")
-const EffectsPanel = preload("res://scripts/ui/effects_panel.gd")
 const DamageNumbers = preload("res://scripts/ui/damage_numbers.gd")
 const Banner = preload("res://scripts/ui/banner.gd")
 const Vfx = preload("res://scripts/render/vfx.gd")
@@ -106,13 +107,19 @@ const FOREST_SPAWN_EVERY_S := 8.0
 const SPAWN_EVERY_S := 4.0     # movement arena
 var next_spawn := 0.0
 var spawning := true           # off while tests park the enemies
+var map1: Node3D               # Map1World: camp, pathways, the wrap-around combat chunk (forest only)
+var rules := Map1Rules.new()   # Map 1's rules: combat, cooldown, objectives, drops
+var keeps_found_pages := false # Map 1: found pages outlive a death [spec §1]
+const M1_POOL := {"sprite": 8, "ghoul": 7, "mortus": 6} # made up front; more on demand
+const M1_RING := Vector2(32, 40)  # spawns this far from the player, just past the fog [spec §4]
+const M1_CORPSE_S := 6.0          # a body lies this long, then goes back to the pool
+const M1_FADE_S := 1.6            # a combat spawn fades in from the mist [layout pass §3]
 var mission_hud: Label         # top-right mission tracker
 var footstep_timer := 0.0
 var death_panel: CanvasLayer
 var died_at := -1.0
 var page_pickups := {}         # page id -> Interactable3D (a page lying in the world)
 var grimoire_panel: CanvasLayer # Tab: Grimoire + Player ID (P5)
-var effects_panel: CanvasLayer  # T: the player's effects [R14]
 var damage_numbers: Node3D      # floating numbers on enemy hits [R14]
 var banner: CanvasLayer         # level / rank-up announcements [R15]
 var vfx: Node3D                 # pooled spell effects (trails, bursts, scorches, flashes)
@@ -158,8 +165,13 @@ func _ready() -> void:
 	e.adjustment_brightness = 1.0
 	env.environment = e
 	add_child(env)
-	level = DarkForest if world_kind == "forest" else Greybox
-	var built: Dictionary = level.build(self)
+	level = Map1World if world_kind == "forest" else Greybox
+	keeps_found_pages = world_kind == "forest"
+	var built: Dictionary
+	if world_kind == "forest":
+		map1 = Map1World.new()
+		built = map1.build(self)
+	else: built = level.build(self)
 	lamps = built.lamps
 	spawn = built.spawn
 	nav.setup(built.bounds[0], built.bounds[1], 1.0 if world_kind == "forest" else nav.CELL)
@@ -170,7 +182,8 @@ func _ready() -> void:
 		training = TrainingField.new()
 		add_child(training)
 		training.build(self)
-		_fixed_solids = _fixed_solids + training.forest_solids() # its portal frame: enemies path round it
+		_fixed_solids = _fixed_solids + training.forest_solids() # its portal frame, at the camp: enemies path round it
+		zones = [{"id": "park", "at": Map1World.SPAWN.at + Vector3(0, -50, 0), "yaw": 0.0}] # the pool waits out of the world
 		if not new_map():
 			get_tree().quit(1)
 			return
@@ -192,7 +205,7 @@ func _ready() -> void:
 	var enemy_root := Node3D.new()
 	enemy_root.name = "Enemies"
 	add_child(enemy_root)
-	for i in (FOREST_CAPACITY if world_kind == "forest" else MAX_ALIVE):
+	for i in (int(M1_POOL.sprite) if world_kind == "forest" else MAX_ALIVE):
 		var spec: Dictionary = zones[i % zones.size()]
 		var id := "sprite_%d" % (i + 1)
 		var foe: CharacterBody3D = BlightedSprite.new()
@@ -206,9 +219,9 @@ func _ready() -> void:
 			if applied > 0.0 and pk.source_faction == "player": session.meta.note_hit(applied))
 		foe.health.died.connect(func(_pk) -> void: on_enemy_died(id))
 		_wire_enemy(foe)
-	var ghoul_n: int = ARENA_GHOULS if world_kind != "forest" else 2 * zones.filter(func(z): return zones.find(z) % GHOUL_ZONE_EVERY == GHOUL_ZONE_EVERY - 1).size()
+	var ghoul_n: int = ARENA_GHOULS if world_kind != "forest" else int(M1_POOL.ghoul)
 	for i in ghoul_n: _add_enemy(enemy_root, "ghoul_%d" % (i + 1), ForestGhoul.new(), zones[i % zones.size()])
-	for i in MORTUS_MAX: _add_enemy(enemy_root, "mortus_%d" % (i + 1), KostasMortus.new(), zones[i % zones.size()])
+	for i in (MORTUS_MAX if world_kind != "forest" else int(M1_POOL.mortus)): _add_enemy(enemy_root, "mortus_%d" % (i + 1), KostasMortus.new(), zones[i % zones.size()])
 	audio = AudioMix.new()
 	audio.name = "AudioMix"
 	add_child(audio)
@@ -225,6 +238,7 @@ func _ready() -> void:
 	hazard_root.name = "Hazards"
 	add_child(hazard_root)
 	hazards.root = hazard_root
+	hazards.ground_fn = func(q: Vector2) -> float: return map1.height_at(q) if map1 else 0.0
 	var spell_root := Node3D.new()
 	spell_root.name = "Spells"
 	add_child(spell_root)
@@ -262,10 +276,6 @@ func _ready() -> void:
 	damage_numbers = DamageNumbers.new()
 	damage_numbers.name = "DamageNumbers"
 	add_child(damage_numbers)
-	effects_panel = EffectsPanel.new()
-	effects_panel.name = "EffectsPanel"
-	add_child(effects_panel)
-	effects_panel.close_requested.connect(func() -> void: session.handle_action("effects_tab"))
 	_make_hud()
 	lofi = LoFiView.new()
 	add_child(lofi)
@@ -493,7 +503,7 @@ func pick_up_page(id: String) -> String:
 # A pickup shows only while its page is not yet found this run (unlocked pages are known for good).
 func _sync_page_pickups() -> void:
 	for id in page_pickups:
-		var on: bool = not session.grimoire.is_found(id)
+		var on: bool = not session.grimoire.is_found(id) and (map1 == null or bool(page_pickups[id].get_meta("dropped", false)))
 		page_pickups[id].visible = on
 		for ch in page_pickups[id].get_children():
 			if ch is CollisionShape3D: ch.disabled = not on
@@ -509,6 +519,7 @@ func _build_interactables() -> void:
 	var root := Node3D.new()
 	root.name = "Interactables"
 	add_child(root)
+	if map1: for id in DarkForest.page_ids(): page_spots[id] = zones[0].at # Map 1: every page waits for a drop
 	for id in page_spots:
 		var pg: StaticBody3D = Interactable3D.new()
 		root.add_child(pg)
@@ -545,7 +556,6 @@ func hide_overlays() -> void:
 	if grimoire_panel != null and grimoire_panel.visible:
 		grimoire_panel.close()
 		if pcombat.rig and not player.health.dead: pcombat.rig.equip(true)
-	if effects_panel != null: effects_panel.close()
 	if not external_driver and not session.paused(): Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 # Tab (the router opened the "grimoire" overlay): the world keeps running [Sir].
@@ -568,24 +578,23 @@ func show_grimoire() -> void:
 const CLEARING_NAMES := ["Camp Ember", "The Crossing", "West Hollow", "East Hollow", "The Stones", "North-west Glade", "North-east Glade"]
 func location_name() -> String:
 	if world_kind != "forest": return "Training Arena"
-	var i: int = DarkForest.clearing_at(player.global_position)
-	return "Dark Forest, " + (CLEARING_NAMES[i] if i >= 0 and i < CLEARING_NAMES.size() else "deep in the trees")
+	var reg: Dictionary = map1.region_of(player.global_position) if map1 else {"kind": ""}
+	match String(reg.kind):
+		"camp": return "Dark Forest, Camp Ember"
+		"pathway": return "Dark Forest, a pathway"
+		"chunk": return "Dark Forest, clearing %d" % int(reg.chunk.index)
+	return "Dark Forest, deep in the trees"
 
 # The MVP has one region at world level 1 (later regions raise it).
 func world_level() -> int:
 	return 1
 
-# T (the router opened the "effects" overlay) [R14]: the world keeps running.
-func show_effects() -> void:
-	effects_panel.open()
-	effects_panel.refresh(effect_rows(session.run.time))
-	if not external_driver: Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-
 static func _num(x: float) -> String:
 	return str(roundi(x)) if absf(x - roundf(x)) < 0.05 else "%.1f" % x
 
-# The Effects tab's rows [R14]: each status on the player with its plain-words
-# description (live numbers), buff or debuff, and the time left.
+# The player's effects [R14]: each status with its plain-words description (live
+# numbers), buff or debuff, and the time left. The held book's status page (page 5)
+# shows them; the T overlay was removed [Sir, 2026-11-21].
 func effect_rows(now: float) -> Array:
 	var out := []
 	for st in player_statuses(now):
@@ -633,6 +642,13 @@ func level_solids() -> Array:
 # Walkers' grid (every solid) and the Sprites' climb grid: a solid whose top a
 # Sprite can climb to (<= CLIMB_MAX) is passable there [R12].
 func _rebuild_navs() -> void:
+	if map1:
+		var b: Array = map1.nav_bounds()
+		nav.setup(b[0], b[1], 1.0)
+		nav_climb.setup(b[0], b[1], 1.0)
+		nav.surface = map1
+		nav_climb.surface = map1
+		static_solids = map1.solids() + (_fixed_solids if map1.camp_loaded else [])
 	var all := level_solids()
 	nav.rebuild(all)
 	nav_climb.rebuild(all.filter(func(b: AABB) -> bool: return b.end.y > (nav.surface.height_at(Vector2(b.get_center().x,b.get_center().z)) if nav.surface else 0.0) + BlightedSprite.CLIMB_MAX + 0.01))
@@ -702,6 +718,7 @@ func actors_step(delta: float, now: float) -> void:
 	if nav_dirty:
 		_rebuild_navs()
 		nav_dirty = false
+	if map1: _map1_step(delta, now)
 	var ctx := {"player": player, "player_health": player.health, "noise": noise.events, "nav": nav_climb, "los": clear_line, "concuss": concuss, "ray": world_ray}
 	var any_aggro := false
 	var awake: Dictionary = _awake_sprites()
@@ -750,6 +767,11 @@ func _awake_sprites() -> Dictionary:
 # each fourth, Forest Ghoul pairs in those, and a Kostas Mortus beside each page in
 # its own clearing. The arena keeps its old Sprite layout and parks the rest.
 func _place_roster(occupied: Array) -> void:
+	if map1:
+		for e in enemies.values():
+			e.reset_to(zones[0].at, 0.0, noise.last_id())
+			_to_reserve(e)
+		return
 	var forest := world_kind == "forest"
 	var sprite_zones: Array = []
 	var ghoul_zones: Array = []
@@ -864,11 +886,18 @@ func on_enemy_died(id: String) -> void:
 	dead_at[id] = session.run.time
 	session.progression.on_kill(int(enemies[id].kill_exp)) # Sprite 25, Ghoul 35, Mortus 200 [Sir, 2026-11-15]
 	session.meta.note_kill(session.progression.kills)
+	if map1 and rules.on_kill(String(enemies[id].kind)): drop_page(enemies[id].global_position)
 
 # The spawner: a dead Sprite goes back to the pool after RESPAWN_S; while fewer
 # than TARGET_ALIVE are in play (and never more than MAX_ALIVE), one comes out
 # every SPAWN_EVERY_S at a zone outside the player's aggro range (no pop-in attacks).
 func _respawn(now: float) -> void:
+	if map1:
+		for id in dead_at.keys():
+			if now - dead_at[id] < M1_CORPSE_S or enemies[id].inert: continue
+			_to_reserve(enemies[id])
+			dead_at.erase(id)
+		return
 	for id in dead_at.keys():
 		if now - dead_at[id] < RESPAWN_S or enemies[id].inert: continue
 		if enemies[id].kind == "mortus": continue # an elite stays down for the run
@@ -994,7 +1023,10 @@ func _on_leveled(level: int, points: int) -> void:
 
 # A notification (level up, rank up, page found or unlocked, not enough MP, on
 # cooldown...): newest last; the same text again only refreshes its timer.
+var notices_shown: Array[String] = [] # the last notices shown (tests read it; they expire from `notices`)
 func show_notice(text: String, seconds := 1.5) -> void:
+	notices_shown.append(text)
+	if notices_shown.size() > 20: notices_shown.pop_front()
 	notice = text
 	notice_time = seconds
 	for n in notices:
@@ -1023,6 +1055,7 @@ func publish(_delta: float) -> void:
 	var pr: RefCounted = session.progression
 	var m: Dictionary = pr.mission()
 	var mission := ("Mission: %s (%d/%d)" % [m.text, m.progress, m.target]) if not m.is_empty() else "Rank %s" % pr.rank
+	if map1: mission = rules.hud_line(alive_count()) + "\n" + mission # Map 1's objectives line [spec §5]
 	if director.in_combat: mission += "\nIN COMBAT" + ("" if director.countdown(now) >= director.OUT_OF_COMBAT_S - 0.01 else "  (%.0f s)" % director.countdown(now))
 	if audio: audio.tick(_delta, director.in_combat)
 	var lines := []
@@ -1037,7 +1070,6 @@ func publish(_delta: float) -> void:
 		if e.visible: e.set_statuses(effect_statuses(id, now))
 	if training and training.active:
 		for d in training.dummies: training.set_statuses(d, effect_statuses(String(d.id), now)) # every debuff shows on a dummy too
-	if effects_panel.visible: effects_panel.refresh(effect_rows(now))
 	grimoire_panel.tick() # the chant hint's countdown
 	if grimoire_panel.visible and grimoire_panel.tab == "effects": # live countdown, 4 times a second
 		_grim_fx_t += _delta
@@ -1183,18 +1215,15 @@ func player_statuses(now: float) -> Array:
 func new_map(seed := -1) -> bool:
 	var t0 := Time.get_ticks_usec()
 	var candidate_seed: int = seed if seed >= 0 else (fixed_map_seed if fixed_map_seed >= 0 else randi())
-	var candidate := DarkForest.generate(candidate_seed)
-	if candidate.is_empty(): return false
 	map_seed = candidate_seed
-	map = candidate
+	map = {"seed": candidate_seed}
 	spawn_rng.seed = map_seed ^ 0x5bd1
-	static_solids = _fixed_solids + DarkForest.scatter(_forest_node, map)
-	nav.surface = map.terrain
-	nav_climb.surface = map.terrain
-	zones = map.zones
-	page_spots = map.pages
-	for id in page_pickups:
-		if page_spots.has(id): page_pickups[id].position = page_spots[id] + Vector3(0, 0.6, 0)
+	map1.reset(candidate_seed)
+	rules.reset(candidate_seed ^ 0x52554c)
+	if training: training.set_forest_portal(true) # the camp is back, its portal with it
+	nav.surface = map1
+	nav_climb.surface = map1
+	for id in page_pickups: page_pickups[id].set_meta("dropped", false)
 	map_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	return true
 
@@ -1258,3 +1287,198 @@ func reset_run() -> void:
 	was_on_floor = true
 	for l in lamps: l.light_energy = l.get_meta("base_energy", 0.7)
 	if prompt: prompt.text = ""
+
+# ---- Map 1, the Dark Forest [Sir, 2026-11-20; docs/spec-map1-dark-forest.md] ----------
+
+## Pages still to find (Map 1's page pool): available and not yet found.
+func page_pool() -> Array:
+	return DarkForest.page_ids().filter(func(id): return not session.grimoire.is_found(id) and not bool(page_pickups[id].get_meta("dropped", false)) if page_pickups.has(id) else false)
+
+func pages_missing() -> bool:
+	return not page_pool().is_empty()
+
+## A page drops where an enemy died: picked up by touching it (F).
+func drop_page(at: Vector3) -> String:
+	var pool := page_pool()
+	if pool.is_empty(): return ""
+	var id: String = pool[spawn_rng.randi() % pool.size()]
+	var pg: Node3D = page_pickups[id]
+	pg.global_position = Vector3(at.x, map1.height_at(Vector2(at.x, at.z)) + 0.6, at.z)
+	pg.set_meta("dropped", true)
+	_sync_page_pickups()
+	show_notice("A page fell!", 2.5)
+	return id
+
+## A pooled enemy of `kind` (reserve), made on demand when the pool is used up.
+func _m1_enemy(kind: String) -> CharacterBody3D:
+	for e in enemies.values():
+		if e.kind == kind and e.reserve and not dead_at.has(e.enemy_id): return e
+	var n := 1
+	while enemies.has("%s_%d" % [kind, n]): n += 1
+	var foe: CharacterBody3D = BlightedSprite.new() if kind == "sprite" else (ForestGhoul.new() if kind == "ghoul" else KostasMortus.new())
+	_add_enemy(get_node("Enemies"), "%s_%d" % [kind, n], foe, zones[0])
+	return foe
+
+## Brings one enemy of `kind` into play at `at`, hunting the player; `fade`: it
+## fades in from the mist over M1_FADE_S.
+func _m1_place(kind: String, at: Vector3, fade := false) -> CharacterBody3D:
+	var e := _m1_enemy(kind)
+	at.y = map1.height_at(Vector2(at.x, at.z))
+	var to := player.global_position - at
+	e.reset_to(at, rad_to_deg(atan2(-to.x, -to.z)), noise.last_id())
+	e.alert_to(player.global_position)
+	_m1_set_fade(e, 1.0 if fade else 0.0)
+	if fade: e.set_meta("m1_fade", 0.0)
+	elif e.has_meta("m1_fade"): e.remove_meta("m1_fade")
+	return e
+
+## Enemies whose ground has gone (a tile hidden behind an exit, a chunk or pathway
+## unloaded behind a seal) fall: any well under the ground goes back to the pool.
+func _m1_lost() -> void:
+	for e in enemies.values():
+		if e.reserve or not e.visible: continue
+		if e.global_position.y < map1.height_at(Vector2(e.global_position.x, e.global_position.z)) - 5.0:
+			_to_reserve(e)
+			dead_at.erase(e.enemy_id)
+
+func _m1_set_fade(e: Node3D, amount: float) -> void:
+	for g in e.find_children("*", "GeometryInstance3D", true, false): (g as GeometryInstance3D).transparency = amount
+
+func _m1_fades(delta: float) -> void:
+	for e in enemies.values():
+		if not e.has_meta("m1_fade"): continue
+		var t: float = float(e.get_meta("m1_fade")) + delta
+		if t >= M1_FADE_S or e.reserve or e.health.dead:
+			_m1_set_fade(e, 0.0)
+			e.remove_meta("m1_fade")
+		else:
+			e.set_meta("m1_fade", t)
+			_m1_set_fade(e, 1.0 - t / M1_FADE_S)
+
+## A combat spawn: on the ring just past the fog, never in view, on open ground
+## of the chunk (in the wrap, within half a field on each axis, so it is never
+## re-centred into sight).
+func _m1_spawn_ring(kind: String) -> CharacterBody3D:
+	for attempt in 32: # only diagonals pass (both axes within half a field, 32 m+ out): retry
+		var a := spawn_rng.randf() * TAU
+		var r := spawn_rng.randf_range(M1_RING.x, M1_RING.y)
+		var off := Vector3(cos(a) * r, 0, sin(a) * r)
+		if absf(off.x) > Map1World.HALF - 1.0 or absf(off.z) > Map1World.HALF - 1.0: continue
+		var at := player.global_position + off
+		if not map1.in_chunk(map1.chunk, at): continue
+		at.y = map1.height_at(Vector2(at.x, at.z))
+		if nav.blocked(nav.cell_of(at)): continue
+		var crowded := false
+		for o in enemies.values():
+			if not o.reserve and o.visible and Vector2(o.global_position.x - at.x, o.global_position.z - at.z).length() < 1.2: crowded = true
+		if crowded: continue
+		return _m1_place(kind, at, true)
+	return null
+
+## One frame of Map 1 (before the enemies think): the map, the rules, the wrap.
+func _map1_step(delta: float, now: float) -> void:
+	var p := player.global_position
+	for ev in map1.update(p, delta):
+		match String(ev.event):
+			"entered_pathway": # no pathway encounters [Sir, 2026-11-22]
+				rules.enter_pathway()
+				nav_dirty = true
+			"entered_chunk":
+				rules.enter_chunk()
+				nav_dirty = true
+			"exit_taken":
+				rules.enter_pathway()
+				nav_dirty = true
+			"camp_sealed":
+				if training: training.set_forest_portal(false) # nothing of the camp stays behind
+				nav_dirty = true
+			"wrap_shift": # the field repeats every CHUNK: shift the grids, no rebuild (8 ms) [perf]
+				var sh: Vector2 = Vector2(ev.shift) * Map1World.CHUNK
+				nav.origin += sh
+				nav_climb.origin += sh
+				nav.revision += 1
+				nav_climb.revision += 1
+			_: nav_dirty = true
+	if nav_dirty:
+		_rebuild_navs()
+		nav_dirty = false
+	# The rules: a fight starts and ends behind a 5 m blackout; the world swaps at its middle [plan-map1-visibility].
+	for ev in rules.step(delta, map1.settled(p), alive_count(), pages_missing()):
+		match String(ev.event):
+			"combat_start":
+				map1.start_combat()
+				nav_dirty = true
+			"spawn": if spawning: _m1_spawn_ring(String(ev.kind))
+			"combat_end": # the fog closes in: when the next wave comes, as a notice top-centre [Sir, 2026-11-22]
+				var cd := int(Map1Rules.T.cooldown_s)
+				show_notice(NEXT_WAVE_NOTICE % ("%d:%02d" % [cd / 60, cd % 60]), NEXT_WAVE_NOTICE_S)
+			"exits_open":
+				var at: Vector3 = map1.end_combat(p, int(ev.count))
+				_m1_into_square(at)
+				player.global_position = at + Vector3(0, 0.05, 0) # the middle of the closed field
+				player.velocity = Vector3.ZERO
+				fall_speed = 0.0
+				p = player.global_position
+				nav_dirty = true
+	if nav_dirty:
+		_rebuild_navs()
+		nav_dirty = false
+	var reg: Dictionary = map1.region_of(p)
+	if not map1.chunk.is_empty() and map1.chunk.wrap: _m1_recentre()
+	_m1_fades(delta)
+	_m1_lost()
+	if not (training and training.active) and art: # Map 1's fog [layout pass §4]: the camp's long view, the forest's breathing 24-32 m
+		var env: Environment = null
+		for n in get_children():
+			if n is WorldEnvironment: env = (n as WorldEnvironment).environment
+		var zone: String = String(reg.kind) if String(reg.kind) != "" else "pathway"
+		if zone == "chunk" and not rules.phase in ["starting", "combat", "ending"]: zone = "peace" # a closed field: thin banks for its 60 m view
+		var vis: float = map1.visibility_at(p, rules)
+		map1.vis_now = vis
+		var preset := String(session.settings.gfx_value("preset"))
+		var peace_reach: float = maxf(session.settings.grass_distance, float(map1.PEACE_GRASS.get(preset, session.settings.grass_distance)))
+		map1.set_grass_reach(peace_reach if zone == "peace" else session.settings.grass_distance) # farther grass only in a closed field
+		var fog_end: float = map1.fog.update(delta, p, player.camera, zone, map1.height_at(Vector2(p.x, p.z)), vis, 0.0)
+		if env:
+			env.fog_depth_end = fog_end
+			env.fog_depth_begin = ArtDirection.FOG_BEGIN if zone == "camp" else (map1.fog.PEACE_BEGIN if zone == "peace" else map1.fog.HAZE_BEGIN) # the close haze in the forest
+			env.fog_depth_curve = 0.8 if zone == "camp" else (map1.fog.PEACE_CURVE if zone == "peace" else map1.fog.HAZE_CURVE) # a closed field: clear near, the fog gathered toward its 60 m
+		player.camera.far = maxf(ArtDirection.FAR_CLIP, fog_end + 8.0)
+		if pcombat.wand and pcombat.wand.lamp: pcombat.wand.lamp.light_volumetric_fog_energy = map1.fog.WAND_FOG if zone != "camp" else 1.0 # the wand's cone lights the fog
+
+const NEXT_WAVE_NOTICE := "The field is clear · next wave in %s"
+const NEXT_WAVE_NOTICE_S := 7.0 # through the blackout (3.5 s) and well after the fog lifts
+
+## The combat-end swap: dropped pages (still to pick up) move to their copy inside the
+## closed field round `at` (the field repeats every CHUNK).
+func _m1_into_square(at: Vector3) -> void:
+	for id in page_pickups:
+		var pg: Node3D = page_pickups[id]
+		if not pg.visible: continue
+		var d: Vector3 = pg.global_position - at
+		d.x = fposmod(d.x + Map1World.HALF, Map1World.CHUNK) - Map1World.HALF
+		d.z = fposmod(d.z + Map1World.HALF, Map1World.CHUNK) - Map1World.HALF
+		var q := at + Vector3(d.x, 0, d.z)
+		q.y = map1.height_at(Vector2(q.x, q.z)) + 0.6
+		pg.global_position = q
+
+## The wrap: every enemy and dropped page at its nearest image of the field
+## round the player (a shift of a whole field, always beyond the fog).
+func _m1_recentre() -> void:
+	var p := player.global_position
+	var period := Map1World.CHUNK
+	var half := Map1World.HALF
+	for e in enemies.values():
+		if e.reserve or not e.visible: continue
+		var d: Vector3 = e.global_position - p
+		var sh := Vector3(-period * signf(d.x) if absf(d.x) > half else 0.0, 0, -period * signf(d.z) if absf(d.z) > half else 0.0)
+		if sh == Vector3.ZERO: continue
+		e.global_position += sh
+		e.origin += sh
+		e.path.clear()
+	for id in page_pickups:
+		var pg: Node3D = page_pickups[id]
+		if not pg.visible: continue
+		var d2: Vector3 = pg.global_position - p
+		var sh2 := Vector3(-period * signf(d2.x) if absf(d2.x) > half else 0.0, 0, -period * signf(d2.z) if absf(d2.z) > half else 0.0)
+		if sh2 != Vector3.ZERO: pg.global_position += sh2

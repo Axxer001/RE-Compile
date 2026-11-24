@@ -136,6 +136,28 @@ Moved to `outputs/RECompile-Archive/2026-11-11/` (outside the Godot project, not
 | 2026-11-20 | `scripts/player/held_rig.gd`, `scripts/ui/page_ink.gd`, `scripts/player/ember_wand.gd` (ported from the pack's HeldRig.gd, PageInk.gd, WandView.gd); fonts EB Garamond and Archivo already in `assets/fonts/` (OFL) | Sir's `GAME ASSETS/Held Grimoire` | Sir's own scripts; fonts SIL OFL 1.1 | OFL texts in `assets/fonts/` | Claude (2026-11-20) |
 
 
+## Map 1 layout pass (2026-11-20)
+
+| Date | Path | Source | Licence | Attribution | Added by |
+|---|---|---|---|---|---|
+| 2026-11-20 | `assets/kenney_fantasy_town/` = 13 GLBs used for the camp's distant town and keep (`wall`, `wall-window-glass`, `wall-window-shutters`, `wall-door`, `wall-wood`, `wall-wood-window-glass`, `wall-block`, `roof`, `roof-gable`, `roof-point`, `roof-high-point`, `pillar-stone`, `chimney`), `assets/kenney_fantasy_town/Textures/colormap.png` (the kit's colour map), `License.txt` | Kenney **Fantasy Town Kit 2.0** (kenney.nl/assets/fantasy-town-kit; `kenney_fantasy-town-kit.zip`, 3.9 MB, downloaded with Sir's approval, relayed 2026-11-20) | CC0 1.0 (License.txt in the kit) | Kenney (www.kenney.nl), not required | Claude (2026-11-20) |
+| 2026-11-20 | `assets/textures/map1/earth.png` (128 px tiling ground detail, the camp trail) | Sir's `Desktop/GAME ASSETS/Dark Forest Layouts/Earth.png` ("an original 128 px tiling ground detail", Implementation Guide.md) | Sir's own pack | None required | Claude (2026-11-20) |
+| 2026-11-20 | `assets/shaders/map1/` (`bamboo`, `mist` adapted from the same pack's Bamboo/Mist.gdshader; `fog_banks`, `fog_sheet` written for the game) | Sir's `Dark Forest Layouts` pack; project code | Sir's own pack / project | None required | Claude (2026-11-20) |
+
+## Infected Hostiles (2026-11-20)
+
+| Date | Path | Source | Licence | Attribution | Added by |
+|---|---|---|---|---|---|
+| 2026-11-20 | `assets/infected_hostiles/` = `blighted_sprite.glb`, `forest_ghoul.glb`, `kostas_mortus.glb` (skinned replacements for the three hostiles, 25 clips each, five-digit hands; the Ghoul's bow and quiver) and their subclass scripts, plus `Quaternius License.txt` and `Animation sources.json` copied from the pack | Sir's `Desktop/GAME ASSETS/Infected Hostiles` pack (GLBs byte-identical, MD5 939e51b6 / a86ace4d / 8a286552), built in `Documents/Codex/Infected Hostiles Study` | Bodies: Quaternius Universal Base Characters, CC0 1.0. Bow, quiver, finger rigs and the bow pose: authored for the pack. **Animations: NOT CLEARED.** Retargeted from Valve's Left 4 Dead 2 animation banks (donor clip per slot in `Animation sources.json`); the pack's README states public distribution rights for those motions have not been established. Same status as the Rose Compass book: replace before any public release | Quaternius (bodies); Valve (source motions) | Claude (ledger, 2026-11-20; provenance relayed by the coordinating session and checked against the pack) |
+| | Status | Staged only: the game still loads `scripts/actors/` (not referenced by any game script) | | | |
+
 ## Generated skill-icon artwork (2026-11-17)
 
 `assets/ui/skill-icons/`: images generated with the built-in image generation tool at the user's request, using user-supplied Brand, Estes and Neeko ability icons as visual references. Includes the original fire pair, cyan set and green/teal rework. These are generated project artwork, not extracted game textures; no Riot or Moonton authorship or endorsement is claimed. The supplied reference images were not copied into the project. This entry records provenance, not a third-party licence grant.
+
+## Dark Forest asset swap (2026-11-24)
+
+| Date | Path | Source | Licence | Attribution | Added by |
+|---|---|---|---|---|---|
+| 2026-11-24 | `assets/hostiles/` = `blighted_sprite.glb`, `forest_ghoul.glb`, `kostas_mortus.glb` and their embedded 64 px textures (imported copies land beside them) | Sir's `Desktop/GAME ASSETS/Finalized Hostiles/{Blighted Sprite - Retro, Forest Ghoul - Ashveil Retro, Kostas Mortus - Iron Ram Retro}` (SHA-256 daf2df24… / 657e8ac5… / c5bdbca2…, byte-identical to the approved files) | Sir's own pack, authored in this project's art direction; the animations are the pack's own (the earlier `assets/infected_hostiles/` set retargeted Left 4 Dead 2 motions and is **not** used by these actors) | None required | Claude (at Sir's instruction, 2026-11-24) |
+| 2026-11-24 | `assets/quaternius/nature/`, `assets/tropical/`, `assets/textures/map1/earth.png`, `assets/map1_vista/` payloads replaced in place (284 files: 68 `.gltf` + 68 `.bin` + textures/impostors/vista) from the approved Dark Forest retro remodel. `assets/BinbunGrass/` deliberately untouched: the project's original Binbun masks, atlas, shaders and materials remain the default | Sir's `Desktop/GAME ASSETS/Dark Forest Retro Remodel/assets_retro` (`manifest.json`, `environment_manifest.json`) | Quaternius Artist License (derivatives of the Quaternius nature packs) + Sir's own tropical and map1 artwork | Quaternius | Claude (2026-11-24) |

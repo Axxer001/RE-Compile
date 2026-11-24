@@ -16,10 +16,23 @@ const ROMAN = ["I", "II", "III", "IV", "V"]
 const COLORS = [Color("#923d2c"), Color("#ae5526"), Color("#36685e"), Color("#5f547b"), Color("#6b5a2e")]
 const BUFF := Color("#36685e")
 const DEBUFF := Color("#923d2c")
-const STATUS_ROWS := 6           # effects that fit on the right page
+const STATUS_ROWS := 3           # rows on the right page, large enough to read at the held view [Sir, 2026-11-21];
+								 # at 90 FOV, 16:9, only the page's top ~440 px is on screen
+const STATUS_NAME_PX := 40       # an effect's name (shrinks only for a name too long for the page)
+const STATUS_TIME_PX := 32       # its time left, bold, on the line below
+const STATUS_X := Vector2(74, 380) # the row's left and right edges (the book's curve hides the page's far edge)
+const STATUS_TOP := 214.0
+const STATUS_PITCH := 76.0
 
 var rig: Node
 var index_page: bool
+static var SANS_BOLD: FontVariation = _bold()
+
+static func _bold() -> FontVariation:
+	var v := FontVariation.new()
+	v.base_font = SANS
+	v.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 700}
+	return v
 
 func text(s: String, y: float, font: Font, px: int, c: Color = INK, x: float = 0, width: float = 440, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER) -> void:
 	draw_string(font, Vector2(x, y), s, align, width, px, c)
@@ -121,13 +134,18 @@ func _status(info: Dictionary) -> void:
 	if effects.is_empty():
 		text("No buffs or debuffs", 260, SERIF, 30, FAINT)
 		return
-	for i in mini(effects.size(), STATUS_ROWS):
+	var w: float = STATUS_X.y - STATUS_X.x
+	var shown: int = effects.size() if effects.size() <= STATUS_ROWS else STATUS_ROWS - 1 # the last row says how many more
+	for i in shown:
 		var e: Dictionary = effects[i]
-		var y: float = 210 + i * 54
+		var y: float = STATUS_TOP + i * STATUS_PITCH
 		var col: Color = DEBUFF if String(e.get("kind", "")) == "debuff" else BUFF
-		draw_circle(Vector2(56, y - 7), 6, col)
-		text(String(e.get("name", e.get("id", ""))), y, SERIF, 27, INK, 74, 230, HORIZONTAL_ALIGNMENT_LEFT)
+		draw_circle(Vector2(STATUS_X.x - 20, y - 13), 9, col)
+		var nm := String(e.get("name", e.get("id", "")))
+		var px := STATUS_NAME_PX
+		while px > 26 and SERIF.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x > w: px -= 2
+		text(nm, y, SERIF, px, INK, STATUS_X.x, w, HORIZONTAL_ALIGNMENT_LEFT)
 		var s: float = float(e.get("s", 0.0))
 		var left: String = String(e.get("until_text", "")) if String(e.get("until_text", "")) != "" else ("%.1f s" % s if s < 1e6 else "")
-		text(left, y, SANS, 19, col, 300, 104, HORIZONTAL_ALIGNMENT_RIGHT)
-	if effects.size() > STATUS_ROWS: text("+%d more (T)" % (effects.size() - STATUS_ROWS), 545, SANS, 19, FAINT)
+		text(left, y + 32, SANS_BOLD, STATUS_TIME_PX, col, STATUS_X.x, w, HORIZONTAL_ALIGNMENT_LEFT)
+	if effects.size() > shown: text("+%d more" % (effects.size() - shown), STATUS_TOP + shown * STATUS_PITCH + 8, SANS_BOLD, STATUS_TIME_PX, FAINT, STATUS_X.x, w, HORIZONTAL_ALIGNMENT_LEFT)

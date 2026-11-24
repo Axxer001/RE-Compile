@@ -70,7 +70,7 @@ func run(c: Node3D) -> void:
 	root.add_child(forest)
 	await physics_frame
 	await physics_frame
-	await preload("res://tests/simulation/test_forest.gd").run(check, forest)
+	await preload("res://tests/simulation/test_map1.gd").run(check, forest) # Map 1 replaces the generated forest [2026-11-20]
 	await preload("res://tests/simulation/test_training.gd").run(check, forest)
 	await preload("res://tests/simulation/test_status_stack.gd").run_dummies(check, forest)
 	await preload("res://tests/simulation/test_grimoire_updates.gd").run_pages(check, forest)

@@ -1,22 +1,24 @@
 extends SceneTree
-# Playthrough suite (handoff §7, §9): a bot plays a fresh run of the 50% MVP
-# in the Dark Forest end to end, through the real game loop (main runs its own
-# physics ticks; run with --fixed-fps 60 so it goes as fast as the CPU allows)
-# and the real input path (keys and mouse buttons through the InputRouter,
-# mouse look through the player's yaw/pitch, panels through their own
-# methods), with the Blighted Sprites live, on a fixed seed: a New game from
-# the pause menu; find and unlock Quick Step; kill 20 Sprites for rank D (the
-# rank banner); find and unlock Ring of Fire and Sage Arts, equip them; one
-# Spell Chant (the stat rises, no EXP); Reset stats refunds exactly; cast the
-# Ring; then die, and check the death model (pages and rank kept, chant tiers back to 1;
-# level, points, loadout lost), the camp respawn at full HP/MP, and a new
-# forest. Every step is asserted.
+# Playthrough suite (handoff §7, §9; Map 1 [Sir, 2026-11-20; docs/spec-map1-dark-forest.md]):
+# a bot plays a fresh run end to end, through the real game loop (main runs
+# its own physics ticks; run with --fixed-fps 60 so it goes as fast as the CPU
+# allows) and the real input path (keys and mouse buttons through the
+# InputRouter, mouse look through the player's yaw/pitch, panels through
+# their own methods), with the enemies live, on a fixed seed: a New game from
+# the pause menu; from the camp through Pathway #0 to the first combat chunk;
+# its first fight until a page drops, picked up and unlocked; the field
+# cleared, the 2 min cooldown, the next fight's kills to rank D (the rank
+# banner); an exit, a pathway, the next chunk and its page; equip them; one
+# Spell Chant (the stat rises, no EXP); Reset stats refunds exactly; cast a
+# found spell; then die, and check the death model (pages and rank kept,
+# chant tiers back to 1; level, points, loadout lost), the camp respawn at
+# full HP/MP, and a new corridor. Every step is asserted.
 #   godot --headless --fixed-fps 60 --path . -s res://tests/playthrough/run_playthrough.gd
 # Emits one `RESULT {json}` line.
 
 const SUITE := "playthrough"
 const NavigationGrid = preload("res://scripts/world/navigation_grid.gd")
-const Forest = preload("res://scripts/world/dark_forest.gd")
+const World = preload("res://scripts/world/map1_world.gd")
 const DamagePacket = preload("res://scripts/combat/damage_packet.gd")
 const SIM_LIMIT_S := 900.0
 const FIGHT_R := 22.0      # the bot shoots from here (the basic fireball reaches 30 m)
@@ -114,7 +116,7 @@ func walk_toward(target: Vector3) -> bool:
 	var pos := p().global_position
 	_replan -= 1
 	if _path.is_empty() or _replan <= 0 or _path_goal.distance_to(target) > 1.0:
-		var r: Dictionary = nav.find_path(pos, target)
+		var r: Dictionary = c.nav.find_path(pos, target) # the game's own grid: it follows Map 1 as it loads
 		if not r.ok: return false
 		_path = r.path
 		_path_goal = target
@@ -275,16 +277,50 @@ func spend_points() -> void:
 	while c.session.stats.unspent > 0:
 		if not gp.allocate("magic_pow"): break
 
-# Walk up to a page lying in the world, look at it, press F.
+# Walk up to a page lying in the world (a drop), look at it, press F.
 func pick_up(id: String) -> bool:
-	var spot: Vector3 = c.page_spots[id]
+	var spot: Vector3 = c.page_pickups[id].global_position - Vector3(0, 0.6, 0)
 	if not await goto(spot + Vector3(0, 0, 1.6), "to the %s page" % id): return false
+	spot = c.page_pickups[id].global_position - Vector3(0, 0.6, 0) # the wrap may have moved it to its nearest image
 	look_at_point(spot + Vector3(0, 0.9, 0))
 	await step()
 	var kind: String = c.target_in_view().kind
 	await tap(KEY_F)
 	check(kind == "page" and c.session.grimoire.is_found(id) and c.notice.begins_with("New page"), "picked up the %s page (%s)" % [id, kind])
 	return c.session.grimoire.is_found(id)
+
+# A dropped page not yet picked up ("" = none).
+func dropped_page() -> String:
+	for id in c.page_pickups:
+		if c.page_pickups[id].visible and not c.session.grimoire.is_found(id): return id
+	return ""
+
+# Fight in the chunk until the rules leave `phase` (combat ends: the field is clear).
+func fight_out(label: String) -> bool:
+	var since := 0
+	while c.rules.phase == "combat":
+		if out_of_time() or p().health.dead:
+			check(false, "%s: died or ran out of time" % label)
+			return false
+		var foe := threat()
+		if foe != null:
+			if not await fight(foe): return false
+		else:
+			await step()
+			since += 1
+	while c.rules.phase == "ending": await step() # the blackout: the field closes, the player is moved to its middle
+	return true
+
+# Walk through the chunk's current pathway to the next chunk (fighting on the way).
+func through_pathway(label: String) -> bool:
+	var taken: Array = c.map1.pathways.filter(func(q): return q.get("taken", false))
+	var pw: Dictionary = taken[0] if not taken.is_empty() else c.map1.pathways[c.map1.pathways.size() - 1]
+	var pts: Array = pw.pts
+	for k in range(1, pts.size()):
+		if not await goto(pts[k], "%s (piece %d)" % [label, k]): return false
+	var ch: Dictionary = c.map1.next_chunk if not c.map1.next_chunk.is_empty() else c.map1.chunk
+	var e: Vector2i = ch.get("entry", Vector2i(0, 1)) # the side the pathway arrives on
+	return await goto(ch.centre + Vector3(e.x, 0, e.y) * (World.HALF - 6.0), label + ": into the field")
 
 # Tab, then solve the page's Code Assembly by clicking lines into place.
 func unlock(id: String) -> bool:
@@ -310,7 +346,7 @@ func unlock(id: String) -> bool:
 func run() -> void:
 	if fixture == "hang": return
 	seed(rng_seed)
-	c.fixed_map_seed = rng_seed # one fixed forest; the spawner's draws are seeded from it (main.spawn_rng)
+	c.fixed_map_seed = rng_seed # one fixed corridor; the spawner's draws are seeded from it (main.spawn_rng)
 	await step()
 	await step()
 	var s = c.session
@@ -326,62 +362,124 @@ func run() -> void:
 	await step()
 	check(s.meta.rank == "E" and s.meta.unlocked == s.meta.START_PAGES and not s.paused(), "New game (wipe progress): rank E, only the start pages, playing")
 	c.banner.shown.connect(func(it) -> void: banners.append(it.kind))
-	nav.setup(Forest.BOUNDS[0], Forest.BOUNDS[1])
-	nav.rebuild(c.static_solids)
 	p().health.died.connect(func(_pk) -> void:
 		deaths += 1
 		var on := 0
 		for id in c.enemies: if c.enemies[id].aggroed: on += 1
-		log.append("died at %.0f s: %d Sprites on the player, hits %s" % [frames / 60.0, on, str(hit_log.slice(-8))]))
+		log.append("died at %.0f s: %d enemies on the player, hits %s" % [frames / 60.0, on, str(hit_log.slice(-8))]))
 	p().health.damaged.connect(func(pk, applied: float) -> void:
 		if applied > 0.0: hit_log.append("%s %.0f" % [pk.kind, applied]))
 	check(c.world_kind == "forest" and p().global_position.distance_to(c.spawn.at) < 0.1 and s.progression.rank == "E" and s.progression.level == 1, "a fresh run at the camp: level 1, rank E")
-	check(c.alive_count() >= 6, "the forest is live: %d Sprites roaming" % c.alive_count())
-	# TEST-ONLY toughness [Sir, 2026-11-19]: the route to the first page pulls 11-17
-	# enemies at once, more than this bot can kite. This suite checks the loop
-	# (pages, rank, chant, death model), not balance, so the bot's player gets x3
-	# Max HP for the life (the game is unchanged; lowest HP and hits are logged).
+	check(c.alive_count() == 0 and c.rules.phase == "camp", "the camp is safe: no enemies (%d)" % c.alive_count())
+	# TEST-ONLY toughness [Sir, 2026-11-19]: this suite checks the loop (pages,
+	# rank, chant, death model), not balance; the bot's player gets x5 Max HP for
+	# the life (the game is unchanged; lowest HP and hits are logged).
 	s.stats.add_modifier("playthrough_test_hp", "max_hp", TEST_HP_MULT, 0.0, INF)
 	p().health.max_hp = float(s.stats.value("max_hp", s.run.time))
 	p().health.hp = p().health.max_hp
 	log.append("test-only x%.0f Max HP: %.0f" % [TEST_HP_MULT, p().health.max_hp])
 
-	# 1. Quick Step, by the camp: pick it up, unlock it, equip it on Q.
-	if not await pick_up("quick_step"): return finish()
-	if not await unlock("quick_step"): return finish()
-	check(c.grimoire_panel.equip_selected("spell_3") == "ok" and String(c.pcombat.loadout.spell_3.id) == "quick_step", "equipped Quick Step on page 3")
-	spend_points()
+	# 1. Out of the camp, through Pathway #0, into the first combat chunk.
+	if not await through_pathway("Pathway #0"): return finish()
+	check(not c.map1.camp_loaded and c.map1.chunk.get("index", 0) == 1, "through Pathway #0: the camp unloaded behind, the first combat chunk reached")
+	var waited := 0
+	while c.rules.phase != "combat" and waited < 600:
+		await step()
+		waited += 1
+	check(c.rules.phase == "combat" and c.rules.objective.kind == "page", "combat starts in the chunk (%.1f s); the first fight wants a page" % (waited / 60.0))
 
-	# 2. The rank mission: 20 kills, fighting through the real loop.
+	# 2. The first fight: until a page drops; pick it up and unlock it; clear the field.
+	var found: Array = []
+	while dropped_page() == "" and c.rules.phase == "combat":
+		if out_of_time() or p().health.dead: break
+		var foe := threat()
+		if foe == null:
+			await steps(30)
+			continue
+		if not await fight(foe): break
+	var page1 := dropped_page()
+	check(page1 != "" and c.rules.objective.met, "a kill drops a page (%s); spawning stops" % page1)
+	if page1 == "": return finish()
+	if not await fight_out("clearing the field"): return finish()
+	if not await pick_up(page1): return finish()
+	found.append(page1)
+	if not await unlock(page1): return finish()
+	spend_points()
+	check(c.rules.phase == "cooldown" and c.rules.exits in [1, 2] and c.map1.pathways.filter(func(q): return q.get("exit", false)).size() == c.rules.exits, "the field cleared: the cooldown, %d exit(s) open" % c.rules.exits)
+
+	# 3. The cooldown runs out with the bot in the chunk: the next fight wants 20 kills (rank D).
+	var wait_cd := 0
+	while c.rules.phase != "combat" and wait_cd < 60 * 130:
+		if out_of_time(): break
+		var foe := hunting_me()
+		if foe != null:
+			if not await fight(foe): break
+		await step()
+		wait_cd += 1
+	check(c.rules.phase == "combat" and c.rules.objective.kind == "kills", "after the 2 min cooldown, combat again: 20 kills (%.0f s)" % (wait_cd / 60.0))
 	var hunts := 0
 	while s.progression.rank == "E":
 		if out_of_time() or p().health.dead: break
 		var foe := threat()
 		if foe == null:
-			await steps(30) # the spawner brings the next one out
+			await steps(30)
 			continue
 		hunts += 1
 		if not await fight(foe): break
 		spend_points()
-	check(not p().health.dead and s.progression.kills >= 20 and s.progression.rank == "D" and s.meta.rank == "D", "20 Sprites killed in one life: rank D (%d kills, level %d)" % [s.progression.kills, s.progression.level])
-	await steps(10)
+	check(not p().health.dead and s.progression.kills >= 20 and s.progression.rank == "D" and s.meta.rank == "D", "20 kills in one life: rank D (%d kills, level %d)" % [s.progression.kills, s.progression.level])
+	# The rank banner queues behind a level banner still on screen (up to IN + HOLD + OUT = 3.2 s): wait for it, bounded.
+	for i in 400:
+		if "rank" in banners: break
+		await step()
 	check("rank" in banners, "the rank-up gets its banner (%s)" % str(banners))
 	log.append("rank D after %.0f s, level %d, lowest HP %.0f" % [frames / 60.0, s.progression.level, lowest_hp])
 	if s.progression.rank != "D": return finish()
+	if not await fight_out("the 20-kill fight"): return finish()
 
-	# 3. Deeper in: Ring of Fire (north-west glade), Sage Arts (north-east glade).
-	if not await pick_up("ring_of_fire"): return finish()
-	if not await pick_up("sage_arts"): return finish()
-	if not await unlock("ring_of_fire"): return finish()
-	if not await unlock("sage_arts"): return finish()
+	# 4. An exit, a pathway, the next chunk; its first fight drops the second page.
+	var exits: Array = c.map1.pathways.filter(func(q): return q.get("exit", false))
+	if exits.is_empty():
+		check(false, "the 20-kill fight's cooldown opens an exit")
+		return finish()
+	if not await goto(World.path_point(exits[0].pts, 2.0), "to an exit"): return finish()
+	await step()
+	check(c.rules.phase == "pathway" and not c.map1.next_chunk.is_empty(), "an exit taken: a pathway to a new combat chunk")
+	if not await through_pathway("the next pathway"): return finish()
+	waited = 0
+	while c.rules.phase != "combat" and waited < 600:
+		await step()
+		waited += 1
+	while dropped_page() == "" and c.rules.phase == "combat":
+		if out_of_time() or p().health.dead: break
+		var foe := threat()
+		if foe == null:
+			await steps(30)
+			continue
+		if not await fight(foe): break
+	var page2 := dropped_page()
+	check(page2 != "" and page2 != page1 and c.map1.chunk.get("index", 0) == 2, "the second chunk's first fight drops another page (%s)" % page2)
+	if page2 == "": return finish()
+	if not await fight_out("clearing the second field"): return finish()
+	if not await pick_up(page2): return finish()
+	found.append(page2)
+	if not await unlock(page2): return finish()
+
+	# 5. Equip what was found: spells on pages 3 and 4, a passive on [P].
 	var gp: CanvasLayer = c.grimoire_panel
-	gp.select_page("ring_of_fire")
-	var e1: String = gp.equip_selected("spell_4")
-	gp.select_page("sage_arts")
-	var e2: String = gp.equip_selected("passive")
-	check(e1 == "ok" and e2 == "ok" and String(c.pcombat.loadout.spell_4.id) == "ring_of_fire" and String(c.pcombat.loadout.passive.id) == "sage_arts", "at rank D: Ring of Fire on page 4, Sage Arts on [P] (%s, %s)" % [e1, e2])
+	var spell_slot := ""
+	var equipped := 0
+	for id in found:
+		var pg: Resource = s.grimoire.page(id)
+		gp.select_page(id)
+		var slot := "passive" if int(pg.kind) == 3 else ("spell_3" if spell_slot == "" else "spell_4")
+		var res: String = gp.equip_selected(slot)
+		if res == "ok":
+			equipped += 1
+			if slot != "passive" and spell_slot == "": spell_slot = slot
+	check(equipped >= 1, "at rank D the found pages are equipped (%d of %d: %s)" % [equipped, found.size(), str(found)])
 
-	# 4. One Spell Chant: with no points left, [+] on Magic Pow starts it.
+	# 6. One Spell Chant: with no points left, [+] on Magic Pow starts it.
 	while hunting_me() != null:
 		if not await fight(hunting_me()):
 			check(false, "before the chant: the fight ended in death or ran out of time (a run cut short is not a pass)")
@@ -398,54 +496,57 @@ func run() -> void:
 	var chant_open: bool = gp.visible
 	check(chant_open and started and r.ok and s.stats.value("magic_pow", s.run.time) > pow0 and int(s.meta.chant_tier.get("magic_pow", 0)) == 1, "a Spell Chant on Magic Pow: right answer, +%.0f Pow" % (s.stats.value("magic_pow", s.run.time) - pow0))
 	check(s.progression.exp == exp0 and s.progression.level == lvl0, "the chant gives no EXP and no level [R9]")
-	# Reset stats: every allocated point and every chant comes back as a point.
 	var st: RefCounted = s.stats
 	var owed: int = st.unspent
 	for k in st.points: owed += int(st.points[k])
 	for k in st.chant_points: owed += int(st.chant_points[k])
 	gp.reset_stats()
 	var refunded: int = gp.reset_stats()
-	var all_base: bool = st.points.values().all(func(v): return int(v) == 0) and st.chant_points.values().all(func(v): return int(v) == 0) and is_equal_approx(st.base_value("magic_pow"), 1000.0) # base (x10 rescale [Sir, 2026-11-15]): a live Cultivate buff is not a stat
+	var all_base: bool = st.points.values().all(func(v): return int(v) == 0) and st.chant_points.values().all(func(v): return int(v) == 0) and is_equal_approx(st.base_value("magic_pow"), 1000.0)
 	check(st.unspent == owed and all_base and refunded >= 1, "Reset stats: every stat back to base, %d points back (allocated + chants)" % owed)
 	spend_points()
 	s.handle_event(_key(KEY_TAB))
 	await step()
 
-	# 5. Cast the Ring of Fire: 4 turns the held book to page 4 (0.5 s), LMB casts it.
-	var casts0: int = int(c.pcombat.casts.get("ring_of_fire", 0))
-	var mp0: float = c.pcombat.mp
-	await tap(KEY_4)
-	var turned := 0
-	while c.pcombat.turning(c.session.run.time) and turned < 240: # however long the turn takes (its timing lives in player_combat)
-		await step()
-		turned += 1
-	await step()
-	var open4: bool = c.pcombat.active == 3
-	await tap(MOUSE_BUTTON_LEFT)
-	check(open4 and int(c.pcombat.casts.get("ring_of_fire", 0)) == casts0 + 1 and c.projectiles.rings.size() >= 1 and c.pcombat.mp < mp0, "4 turns to page 4 in %d ticks; LMB casts the Ring of Fire: orbs round the player, MP spent" % turned)
+	# 7. Cast a found spell: its number key turns the held book to it, LMB casts it.
+	if spell_slot != "":
+		var sid: String = String(c.pcombat.loadout.get(spell_slot).id)
+		var casts0: int = int(c.pcombat.casts.get(sid, 0))
+		await tap(KEY_3 if spell_slot == "spell_3" else KEY_4)
+		var turned := 0
+		while c.pcombat.turning(c.session.run.time) and turned < 240:
+			await step()
+			turned += 1
+		for i in 30: await step() # any cooldown from the equip settles
+		c.pcombat.mp = c.pcombat.max_mp()
+		c.pcombat.ready_at.erase(spell_slot)
+		await tap(MOUSE_BUTTON_LEFT)
+		for i in 6: await step()
+		check(int(c.pcombat.casts.get(sid, 0)) >= casts0 + 1, "its key turns the book to %s; LMB casts it" % sid)
 	check(not p().health.dead and deaths == 0 and not out_of_time(), "the whole loop in one life, %.0f s of game time (lowest HP %.0f)" % [frames / 60.0, lowest_hp])
-	log.append("hunts %d, kills %d, level %d, frames %d" % [hunts, s.progression.kills, s.progression.level, frames])
+	log.append("hunts %d, kills %d, level %d, frames %d, pages %s" % [hunts, s.progression.kills, s.progression.level, frames, str(found)])
 	release_all()
 
-	# 6. Death [R5]: what was learned is kept, the run is lost; back at camp in a new forest.
+	# 8. Death [R5; Map 1 spec §1]: back at the camp, pages and rank kept, a new corridor.
 	var lvl_dead: int = s.progression.level
 	var seed_dead: int = c.map_seed
-	c.fixed_map_seed = -1 # the respawn draws a new forest, as in the game
-	var trees_dead: Array = c.map.trees.slice(0, 5)
-	p().health.apply(DamagePacket.new(990001, "test", "infected", 9999.0, "bite"), s.run.time)
-	await step()
+	c.fixed_map_seed = -1 # the respawn draws a new corridor, as in the game
+	var layout_dead: String = str(c.map1.pathways[0].pts) if not c.map1.pathways.is_empty() else ""
+	for k in 900: # a killing blow (again after any i-frames: a Flight of the Phoenix just cast is invulnerable until it lands)
+		if p().health.dead: break
+		p().health.apply(DamagePacket.new(990001 + k, "test", "infected", 9.0e6, "bite"), s.run.time)
+		await step()
 	check(p().health.dead and c.death_panel.visible and c.death_panel.button.text == "Return to camp" and c.death_panel.detail.text.contains("Kept"), "death: the panel says what is lost and kept, and offers Return to camp")
 	c.death_panel.button.pressed.emit()
 	await step()
 	await step()
-	var learned: Array = s.meta.START_PAGES + ["quick_step", "ring_of_fire", "sage_arts"] # the start pages and the three this run found
-	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == learned.size() and learned.all(func(id): return id in s.meta.unlocked) and s.meta.chant_tier.is_empty()
+	var learned: Array = s.meta.START_PAGES + found
+	var kept: bool = s.meta.rank == "D" and s.meta.unlocked.size() == learned.size() and learned.all(func(id): return id in s.meta.unlocked) and s.meta.chant_tier.is_empty() and found.all(func(id): return s.grimoire.is_found(id))
 	var lost: bool = s.progression.level == 1 and s.progression.kills == 0 and s.stats.unspent == 0 and c.pcombat.loadout.spell_4 == null and c.pcombat.loadout.passive == null and c.pcombat.loadout.spell_3 == null
-	check(kept, "after death, kept: rank D, the start pages and the 3 found; the chant tiers are back to tier 1 [R5; Sir, 2026-11-14] (rank %s, %d unlocked, tiers %s)" % [s.meta.rank, s.meta.unlocked.size(), s.meta.chant_tier])
+	check(kept, "after death, kept: rank D, the start pages and the 2 found; the chant tiers are back to tier 1 (rank %s, %d unlocked, tiers %s)" % [s.meta.rank, s.meta.unlocked.size(), s.meta.chant_tier])
 	check(lost and lvl_dead > 1, "after death, lost: level %d -> 1, kills, stat points and the loadout [R5]" % lvl_dead)
-	check(not p().health.dead and p().global_position.distance_to(c.spawn.at) < 0.1 and is_equal_approx(p().health.hp, p().health.max_hp) and is_equal_approx(c.pcombat.mp, c.pcombat.max_mp()), "respawned at the camp with full HP and MP")
-	check(c.map_seed != seed_dead and c.map.trees.slice(0, 5) != trees_dead and Forest.rule_violations(c.map).is_empty(), "a new seed, a new forest (still a valid map)")
-	check(s.grimoire.page("ring_of_fire").rank_ok(s.progression.rank) and c.grimoire_panel.equip_selected("spell_4") != "rank", "rank D is kept: Ring of Fire can be equipped again in the new run")
+	check(not p().health.dead and p().global_position.distance_to(c.spawn.at) < 0.1 and c.map1.camp_loaded and c.rules.phase == "camp" and is_equal_approx(p().health.hp, p().health.max_hp) and is_equal_approx(c.pcombat.mp, c.pcombat.max_mp()), "respawned at the camp with full HP and MP")
+	check(c.map_seed != seed_dead and str(c.map1.pathways[0].pts) != layout_dead, "a new seed, a new corridor from the start")
 	finish()
 
 func _key(k: int) -> InputEventKey:

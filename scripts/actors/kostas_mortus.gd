@@ -1,23 +1,27 @@
 extends "res://scripts/actors/blighted_sprite.gd"
 # Kostas Mortus [Elite] [Sir, 2026-11-15; docs/plan-dark-forest-roster.md]:
-#   melee; 3000 HP, 80 damage, attack speed 0.5/s, 3 m/s, detection 30 m with
+#   melee; 3000 HP, 80 damage, attack speed 0.5/s, 3 m/s, detection 25 m with
 #   line of sight, attack range 1.5 m [Sir 2026-11-15b]; normal melee between charges. Takes 50%
 #   less damage from the front.
-#   Charge: with the player 15-30 m away (in sight, off its 15 s cooldown) it
+#   Charge: with the player 12-25 m away (in sight, off its 15 s cooldown) it
 #   winds up 1.5 s, then charges at 20 m/s in a straight line toward where it
-#   saw the player, up to 30 m or until it hits them: 100 damage, knocked back
+#   saw the player, up to 25 m or until it hits them: 100 damage, knocked back
 #   10 m, Concussed 3 s. A tree or rock stops the charge and stuns it 1.5 s.
 #   Every debuff and effect on it is halved (duration, stat reduction, damage)
 #   and it ignores pulls, knockback and launches (resist / displace_immune).
 #   One per clearing that holds a page, guarding it.
-# Model: the Sprite's body x1.6, darker emissive skin, DarkMagicFX void aura.
-# Anim: Walk slowed, Crouch_Idle for the wind-up, Sprint for the charge.
+# Model: the approved Iron Ram Retro giant [asset swap 2026-11-24]: one skinned GLB
+# at its own 2.79 m height (scale 1.0; the old body was scaled 1.6) with its own
+# visor slits, so neither the skin tint nor the glowing-eye overlay is used. The
+# charge stays velocity-driven and plays the in-place run clip; the rush clip's
+# 25 m root motion is deliberately left unplayed so one owner moves the body.
 
-const MORTUS := {"hp": 3000.0, "damage": 80.0, "attack_speed": 0.5, "speed": 3.0, "detect": 30.0, "range": 1.5, "deaggro": 50.0,
-	"charge_min": 15.0, "charge_max": 30.0, "windup_s": 1.5, "charge_speed": 20.0, "charge_len": 30.0,
+const MORTUS := {"hp": 3000.0, "damage": 80.0, "attack_speed": 0.5, "speed": 3.0, "detect": 25.0, "range": 1.5, "deaggro": 35.0, # [Map 1 spec §4: scaled to the 30 m fog]
+	"charge_min": 12.0, "charge_max": 25.0, "windup_s": 1.5, "charge_speed": 20.0, "charge_len": 25.0,
 	"charge_damage": 100.0, "knockback": 10.0, "concuss_s": 3.0, "stun_s": 1.5, "charge_cd": 15.0,
-	"front_mult": 0.5, "front_deg": 90.0, "resist": 0.5, "kill_exp": 200, "scale": 1.6}
-const MORTUS_SKIN := Color(0.16, 0.1, 0.2)
+	"front_mult": 0.5, "front_deg": 90.0, "resist": 0.5, "kill_exp": 200}
+
+const HostileModelsR = preload("res://scripts/actors/hostile_models.gd")
 
 var charge_ready := 0.0         # sim time the next charge may start
 var charge_dir := Vector3.ZERO
@@ -56,14 +60,10 @@ func setup(id: String, at: Vector3, yaw_deg: float) -> void:
 	hp_bar.position.y = HEIGHT * 1.6 + 0.35
 
 func _build_model() -> void:
-	super._build_model()
-	model.scale = Vector3.ONE * float(MORTUS.scale)
-	if _skin:
-		_skin.albedo_color = Look.palette_tint(MORTUS_SKIN, 0.3)
-		_skin.emission = Color(0.4, 0.05, 0.5)
-		_skin.emission_energy_multiplier = 0.6
-		_skin_emission = _skin.emission
-		_skin_energy = _skin.emission_energy_multiplier
+	var built: Dictionary = HostileModelsR.build(HostileModelsR.MORTUS_PATH, HostileModelsR.MORTUS_CLIPS, self)
+	model = built.model
+	anim = built.anim
+	_use_skins(built.skins)
 	var aura: Node3D = Vfx.make_loop("addiction") # DarkMagicFX void aura, purple
 	if aura:
 		aura.name = "VoidAura"

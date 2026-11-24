@@ -1,0 +1,33 @@
+{
+  "blighted_sprite": {
+    "idle": "models/infected/anim_hunter.mdl / @Idle_Crouching_01",
+    "walk": "models/infected/anim_hunter.mdl / a_Crouch_Walk_Upper_KNIFEN",
+    "run": "models/infected/anim_hunter.mdl / a_RunN",
+    "strike": "models/infected/anim_hunter.mdl / @Melee_01",
+    "charge": "models/infected/anim_hunter.mdl / @Idle_Crouching_01",
+    "pounce_start": "models/infected/anim_hunter.mdl / @Lunge_01",
+    "air": "models/infected/anim_hunter.mdl / @pounce_idle_high",
+    "land": "models/infected/anim_hunter.mdl / @Lunge_Land_low_nav_01",
+    "climb": "models/infected/anim_hunter.mdl / a_Ladder_Ascend",
+    "death": "models/infected/anim_common.mdl / @Death_03",
+    "stride": "models/infected/anim_common.mdl / @Shamble_01"
+  },
+  "forest_ghoul": {
+    "idle": "models/infected/anim_common.mdl / @Idle_Alert_01a",
+    "walk": "models/infected/anim_common.mdl / @Shamble_02",
+    "jog": "models/infected/anim_common.mdl / a_Run_01",
+    "climb": "models/infected/anim_common.mdl / @Ladder_Ascend",
+    "death": "models/infected/anim_common.mdl / @Death_03",
+    "aim": "bow hold",
+    "shoot": "bow release"
+  },
+  "kostas_mortus": {
+    "idle": "models/infected/anim_charger.mdl / @Idle_Upper_KNIFE",
+    "stride": "models/infected/anim_charger.mdl / a_WalkN",
+    "walk": "models/infected/anim_charger.mdl / a_WalkN",
+    "charge": "models/infected/anim_charger.mdl / @Crouch_Idle_Upper_KNIFE",
+    "run": "models/infected/anim_charger.mdl / a_charge",
+    "strike": "models/infected/anim_charger.mdl / @Melee_01",
+    "death": "models/infected/anim_common.mdl / @Death_08"
+  }
+}
