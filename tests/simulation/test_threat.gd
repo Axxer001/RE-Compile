@@ -1,8 +1,8 @@
 extends RefCounted
-# Threat checks (P3: the Blighted Sprite, Tech Spec §4): navigation grid,
-# footsteps, idle roam, aggro at 16 m, chase at 5.5 m/s, the 0.35 s telegraph
-# at 1.8 m and its dodge, 12 damage per 1.2 s, disengage past 24 m back to its
-# origin, the AggroTracker's 3 s out-of-combat countdown [R12], kill EXP and the
+# Threat checks (the Blighted Sprite, reworked by Sir 2026-11-15): navigation grid,
+# footsteps, idle roam, detection at 35 m in sight [Map 1 spec §4], chase at 9 m/s, the pounce from
+# 10-15 m, the 0.35 s telegraph at 5 m and its dodge, 30 damage at 1.00/s with
+# its +20% per landed hit, disengage past 45 m back to its origin, the AggroTracker's 3 s out-of-combat countdown [R12], kill EXP and the
 # 20-kill Rank D mission, respawns, player death and restart, pause, overlay
 # closing on damage. The Shambler version is reference/shooter/.
 
@@ -38,21 +38,29 @@ static func run(check: Callable, c: Node3D) -> void:
 	var saved_k: Callable = s.input.key_source
 	s.input.key_source = func(k: int) -> bool: return keys.get(k, false)
 	var nav: RefCounted = c.nav
-	var sprites: Array = c.enemies.values()
+	var sprites: Array = c.enemies.values().filter(func(e): return e.kind == "sprite")
+	var others: Array = c.enemies.values().filter(func(e): return e.kind != "sprite")
 	var live: Array = sprites.filter(func(e): return not e.reserve)
-	check.call(sprites.size() == c.MAX_ALIVE and c.MAX_ALIVE == 20 and live.size() == 6 and live.all(func(e): return e is Sprite and e.state == Sprite.State.IDLE_ROAM and e.health.hp == 120.0), "a pool of 20 Sprites (the R6 cap): six start roaming at their zones with 120 HP, 14 in reserve")
-	check.call(live.all(func(e): return flat(e.global_position).distance_to(flat(c.spawn.at)) > Sprite.AGGRO_R + 10.0) and not c.director.in_combat, "none starts inside aggro range of the player spawn; out of combat")
-	check.call(Sprite.SPEED == 8.0 and Sprite.AGGRO_R == 16.0 and Sprite.DEAGGRO_R == 24.0 and Sprite.WINDUP_R == 1.8 and Sprite.WINDUP_S == 0.35 and Sprite.DAMAGE == 12.0 and Sprite.ATTACK_INTERVAL == 1.2, "Sprite tuning: 8 m/s [Sir R8], aggro 16 / de-aggro 24 m, 0.35 s windup at 1.8 m, 12 per 1.2 s [spec]")
+	check.call(sprites.size() == c.MAX_ALIVE and c.MAX_ALIVE == 20 and live.size() == 6 and live.all(func(e): return e is Sprite and e.state == Sprite.State.IDLE_ROAM and e.health.hp == 500.0) and others.all(func(e): return e.reserve), "a pool of 20 Sprites (the R6 cap): six start roaming at their zones with 500 HP, 14 in reserve; the arena parks its Ghouls and Mortus")
+	check.call(live.all(func(e): return flat(e.global_position).distance_to(flat(c.spawn.at)) > c.spawn_clear()) and not c.director.in_combat, "none starts within %.0f m of the player spawn; out of combat" % c.spawn_clear())
+	check.call(Sprite.SPEED == 9.0 and Sprite.AGGRO_R == 35.0 and Sprite.DEAGGRO_R == 45.0 and Sprite.WINDUP_R == 1.5 and Sprite.WINDUP_S == 0.35 and Sprite.DAMAGE == 30.0 and Sprite.ATTACK_INTERVAL == 1.0 and Sprite.HP == 500.0, "Sprite tuning [Sir, 2026-11-15; ranges Map 1 spec §4]: 500 HP, 9 m/s, detection 35 m (gives up past 45), 0.35 s windup at 1.5 m [15b], 30 damage at 1.00/s")
 
 	# The spawner keeps 8 in play [design], one every 4 s, far from the player; never over 20.
+	# (At 35 m detection the arena's Sprites hunt the player at once: the player is
+	# made untouchable here, and each new Sprite is checked where it appears.)
+	c.player.health.grant_immunity(INF, ["*"], -INF, "test")
 	var most := 0
 	var near_spawn := false
+	var seen := {}
+	for e in c.enemies.values(): if not e.reserve: seen[e.enemy_id] = true
 	for i in int(round(9.0 / DT)):
 		s.step(DT)
 		most = maxi(most, c.alive_count())
 		for e in c.enemies.values():
-			if not e.reserve and e.visible and flat(e.global_position).distance_to(flat(c.player.global_position)) <= Sprite.AGGRO_R: near_spawn = true
-	check.call(c.alive_count() == c.TARGET_ALIVE and most == c.TARGET_ALIVE and not near_spawn and c.TARGET_ALIVE <= c.MAX_ALIVE, "after 9 s: %d in play (6 + one every 4 s up to %d), none inside aggro range" % [c.alive_count(), c.TARGET_ALIVE])
+			if not e.reserve and e.visible and not seen.has(e.enemy_id):
+				seen[e.enemy_id] = true
+				if flat(e.global_position).distance_to(flat(c.player.global_position)) <= c.spawn_clear(): near_spawn = true
+	check.call(c.alive_count() == c.TARGET_ALIVE and most == c.TARGET_ALIVE and not near_spawn and c.TARGET_ALIVE <= c.MAX_ALIVE, "after 9 s: %d in play (6 + one every 4 s up to %d), each new one more than %.0f m away" % [c.alive_count(), c.TARGET_ALIVE, c.spawn_clear()])
 	var killed := []
 	for e in c.enemies.values():
 		if not e.reserve:
@@ -64,6 +72,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var refilling: int = c.alive_count()
 	for i in int(round(8.2 / DT)): s.step(DT)
 	var recycled: bool = killed.all(func(e): return e.reserve or (not e.health.dead and e.visible))
+	c.player.health.grant_immunity(-1.0, [], -INF, "test")
 	check.call(all_dead == 0 and refilling >= 1 and recycled and c.alive_count() <= c.TARGET_ALIVE and s.progression.kills == c.TARGET_ALIVE, "killing all 8: the spawner refills from the pool (%d after 4 s, %d after 12 s) and the dead return to it after 12 s: 20 kills stay reachable" % [refilling, c.alive_count()])
 	# A new Sprite never comes out at a zone inside the player's reach: stand on each zone in turn.
 	var bad_zone := 0
@@ -71,8 +80,8 @@ static func run(check: Callable, c: Node3D) -> void:
 		c.player.global_position = z.at
 		for k in 40:
 			var fz: Dictionary = c._free_zone()
-			if not fz.is_empty() and flat(fz.at).distance_to(flat(z.at)) <= Sprite.AGGRO_R + 4.0: bad_zone += 1
-	check.call(bad_zone == 0, "spawn zones inside 20 m of the player are never used (%d bad picks)" % bad_zone)
+			if not fz.is_empty() and flat(fz.at).distance_to(flat(z.at)) <= c.spawn_clear(): bad_zone += 1
+	check.call(bad_zone == 0, "spawn zones inside %.0f m of the player are never used (%d bad picks)" % [c.spawn_clear(), bad_zone])
 	s.restart()
 	await tree.physics_frame
 
@@ -125,51 +134,57 @@ static func run(check: Callable, c: Node3D) -> void:
 			"walk": check.call(radii.size() >= 2 and radii.all(func(x): return x == 6.0), "running: footsteps heard at 6 m (%d)" % radii.size())
 		steps(c, 0.3)
 
-	# Aggro by distance (any facing, no sight cone): 16.5 m no, 15.5 m yes.
-	put_enemy(sh, Vector3(60, 0, 70), 0.0)
-	put_player(c, Vector3(60, 0, 53.5)) # 16.5 m
+	# Detection by distance (any facing, no sight cone) [Map 1 spec §4]: 35.5 m no, 34.5 m yes.
+	# An open east-west line of the arena, found first (the checks need sight).
+	var row := -1.0
+	for z in [76.0, 74.0, 56.0, 54.0, 48.0, 44.0, 36.0, 34.0, 20.0, 16.0, 6.0, 4.0]:
+		if c.clear_line(Vector3(6, 1.6, z), Vector3(41.5, 1.6, z)): row = z; break
+	check.call(row > 0.0, "an open 35 m sight line in the arena (z %.0f)" % row)
+	put_enemy(sh, Vector3(6, 0, row), -90.0)
+	put_player(c, Vector3(41.5, 0, row)) # 35.5 m
 	await tree.physics_frame
+	c.director.reset() # the footsteps above were heard and seen from 35 m: start this check out of combat
 	s.step(DT)
 	var calm: bool = sh.state == Sprite.State.IDLE_ROAM and not c.director.in_combat
-	put_enemy(sh, Vector3(60, 0, 70), 180.0) # facing away
-	put_player(c, Vector3(60, 0, 54.5)) # 15.5 m, behind its back
+	put_enemy(sh, Vector3(6, 0, row), 90.0) # facing away
+	put_player(c, Vector3(40.5, 0, row)) # 34.5 m, behind its back
 	await tree.physics_frame
 	s.step(DT)
-	check.call(calm and sh.state == Sprite.State.CHASE and sh.aggroed and c.director.in_combat, "aggro at 16 m whatever its facing; the player is in combat")
+	check.call(calm and sh.state == Sprite.State.CHASE and sh.aggroed and c.director.in_combat, "detection at 35 m whatever its facing; the player is in combat")
 	var a: Vector3 = sh.global_position
 	sh.pounce_ready = s.run.time + 10.0 # pounce on cooldown: this is the plain chase
 	steps(c, 0.5)
 	var chased := flat(sh.global_position).distance_to(flat(a))
-	check.call(chased > 3.5 and chased <= Sprite.SPEED * 0.5 + 0.05 and sh.state == Sprite.State.CHASE, "chases at 8 m/s, below the player's 10 (%.2f m in 0.5 s)" % chased)
+	check.call(chased > 3.8 and chased <= Sprite.SPEED * 0.5 + 0.05 and sh.state == Sprite.State.CHASE, "chases at 9 m/s, below the player's 10 (%.2f m in 0.5 s)" % chased)
 
-	# Pounce [Sir R8, R12]: at 20 m or closer, in sight, it stands 0.5 s, then leaps (18 m/s):
-	# 20 damage and Concuss (-80% Mov Spd and Atk Spd for 1.5 s).
-	check.call(Sprite.POUNCE_R == 20.0 and Sprite.DIVE_MAX == 25.0 and Sprite.CHARGE_S == 0.5 and Sprite.POUNCE_COOLDOWN_S == 6.0, "pounce tuning [R12]: from 20 m, leaps up to 25 m; 0.5 s charge, 6 s cooldown")
+	# Pounce [Sir, 2026-11-15b; ranges Map 1 spec §4]: within 15 m (not under 10), in sight, a 2 s crouch, then a straight
+	# jump-dash at 20 m/s: 60 damage and Concuss (-80% Mov Spd and Atk Spd for 1.5 s); 15 s cooldown.
+	check.call(Sprite.POUNCE_MIN == 10.0 and Sprite.POUNCE_R == 15.0 and Sprite.CHARGE_S == 2.0 and Sprite.DIVE_SPEED == 20.0 and Sprite.POUNCE_DAMAGE == 60.0 and Sprite.POUNCE_COOLDOWN_S == 15.0, "pounce tuning: from 10-15 m, a 2 s crouch, a 20 m/s jump-dash, 60 damage, 15 s cooldown")
 	c.player.health.reset()
 	s.stats.modifiers.clear()
-	put_enemy(sh, Vector3(60, 0, 65.5), 0.0)
-	put_player(c, Vector3(60, 0, 45)) # 20.5 m (aggro first: it is hunting)
+	put_enemy(sh, Vector3(60, 0, 55.5), 0.0)
+	put_player(c, Vector3(60, 0, 40)) # 15.5 m (aggro first: it is hunting)
 	await tree.physics_frame
 	sh.alert_to(c.player.global_position)
 	s.step(DT); s.step(DT)
 	var no_charge_far: bool = sh.state == Sprite.State.CHASE and sh.pounces == 0
-	put_enemy(sh, Vector3(60, 0, 64.5), 0.0)
-	put_player(c, Vector3(60, 0, 45)) # 19.5 m
+	put_enemy(sh, Vector3(60, 0, 54.5), 0.0)
+	put_player(c, Vector3(60, 0, 40)) # 14.5 m
 	await tree.physics_frame
 	sh.alert_to(c.player.global_position)
 	s.step(DT); s.step(DT)
 	var c0: Vector3 = sh.global_position
 	var charging: bool = sh.state == Sprite.State.CHARGE
-	for i in int(round(0.45 / DT)): s.step(DT)
-	var still_charging: bool = sh.state == Sprite.State.CHARGE and flat(sh.global_position).distance_to(flat(c0)) < 0.01 and c.player.health.hp == 100.0
+	for i in int(round(1.9 / DT)): s.step(DT)
+	var still_charging: bool = sh.state == Sprite.State.CHARGE and flat(sh.global_position).distance_to(flat(c0)) < 0.01 and c.player.health.hp == 1000.0
 	var hit_t := -1.0
 	for i in 120:
 		s.step(DT)
-		if c.player.health.hp < 100.0:
+		if c.player.health.hp < 1000.0:
 			hit_t = s.run.time
 			break
-	check.call(no_charge_far and charging and still_charging, "pounce: none at 20.5 m; at 19.5 m it stands still for the 0.5 s charge, no damage yet")
-	check.call(hit_t > 0.0 and c.player.health.hp == 80.0 and sh.pounces == 1 and sh.pounce_hits == 1, "the dive lands: exactly 20 damage (hp %.0f)" % c.player.health.hp)
+	check.call(no_charge_far and charging and still_charging, "pounce: none at 15.5 m; at 14.5 m it crouches 2 s first, no damage yet")
+	check.call(hit_t > 0.0 and c.player.health.hp == 940.0 and sh.pounces == 1 and sh.pounce_hits == 1, "the dash lands: exactly 60 damage (hp %.0f)" % c.player.health.hp)
 	var run_c: float = c.player.run_top()
 	var atk_c: float = s.stats.attack_interval(s.run.time)
 	check.call(absf(run_c - 2.0) < 0.01 and absf(atk_c - 1.0) < 0.01, "Concuss: run %.2f m/s, one attack per %.2f s (-80%%)" % [run_c, atk_c])
@@ -177,28 +192,36 @@ static func run(check: Callable, c: Node3D) -> void:
 	await tree.physics_frame
 	while s.run.time - hit_t < 1.55: s.step(DT)
 	check.call(absf(c.player.run_top() - 10.0) < 0.01 and absf(s.stats.attack_interval(s.run.time) - 0.2) < 0.01, "Concuss ends after 1.5 s: run 10, attack every 0.2 s")
-	# Cooldown: no second pounce within 6 s of the first dive.
+	# Too close: no pounce under 10 m.
+	put_enemy(sh, Vector3(60, 0, 63), 0.0)
+	sh.pounce_ready = 0.0
+	put_player(c, Vector3(60, 0, 54)) # 9 m
+	await tree.physics_frame
+	sh.alert_to(c.player.global_position)
+	s.step(DT); s.step(DT)
+	check.call(sh.state == Sprite.State.CHASE and sh.pounces == 0, "inside 10 m it chases instead of pouncing")
+	# Cooldown: no second pounce within 15 s of the first dash.
 	put_enemy(sh, Vector3(60, 0, 69.5), 0.0)
-	sh.pounce_ready = s.run.time + 3.0 # as if it dived 3 s ago
+	sh.pounce_ready = s.run.time + 3.0 # as if it dashed 12 s ago
 	c.player.health.reset()
-	put_player(c, Vector3(60, 0, 62)) # 7.5 m
+	put_player(c, Vector3(60, 0, 55.5)) # 14 m
 	await tree.physics_frame
 	s.step(DT); s.step(DT)
-	check.call(sh.state == Sprite.State.CHASE and sh.pounces == 0, "on its 6 s cooldown it chases instead of pouncing")
+	check.call(sh.state == Sprite.State.CHASE and sh.pounces == 0, "on its 15 s cooldown it chases instead of pouncing")
 	# Dash i-frames dodge the dive.
 	put_enemy(sh, Vector3(60, 0, 69.5), 0.0)
 	c.player.health.reset()
 	s.stats.modifiers.clear()
-	put_player(c, Vector3(60, 0, 60))
+	put_player(c, Vector3(60, 0, 55.5)) # 14 m
 	await tree.physics_frame
-	for i in int(round(0.55 / DT)): s.step(DT)
+	for i in int(round(2.05 / DT)): s.step(DT)
 	c.player.health.grant_immunity(s.run.time + 1.0, ["*"], s.run.time)
 	for i in 60: s.step(DT)
-	check.call(sh.pounces == 1 and sh.pounce_hits == 0 and c.player.health.hp == 100.0 and absf(c.player.run_top() - 10.0) < 0.01, "dash i-frames dodge the pounce: no damage, no Concuss")
+	check.call(sh.pounces == 1 and sh.pounce_hits == 0 and c.player.health.hp == 1000.0 and absf(c.player.run_top() - 10.0) < 0.01, "dash i-frames dodge the pounce: no damage, no Concuss")
 	c.player.health.grant_immunity(-1.0, [], -INF)
 	# Line of sight: a Sprite already hunting (hit, say) chases a player behind a wall, never pounces.
-	put_enemy(sh, Vector3(47, 0, 12), 90.0)
-	put_player(c, Vector3(42, 0, 12)) # 5 m, the 6 m run wall at x 44 between
+	put_enemy(sh, Vector3(51, 0, 12), 90.0)
+	put_player(c, Vector3(42, 0, 12)) # 9 m, the 6 m run wall at x 44 between
 	await tree.physics_frame
 	sh.alert_to(c.player.global_position)
 	var ever_charged := false
@@ -207,57 +230,65 @@ static func run(check: Callable, c: Node3D) -> void:
 		if sh.state == Sprite.State.CHARGE: ever_charged = true
 	check.call(not ever_charged and sh.pounces == 0, "no pounce without line of sight")
 
-	# The strike: windup at 1.8 m, lands after 0.35 s, one hit per 1.2 s in contact.
+	# The strike: windup at 1.5 m [15b], lands after 0.35 s; 30 damage at 1.00/s, +20% attack
+	# speed per hit landed (5 stacks at most), the stacks gone after 5 s without a hit.
 	c.player.health.reset()
 	put_enemy(sh, Vector3(60, 0, 62), 0.0)
-	put_player(c, Vector3(60, 0, 60.5)) # 1.5 m ahead
+	put_player(c, Vector3(60, 0, 61)) # 1 m ahead
 	await tree.physics_frame
 	s.step(DT) # roam -> aggro
-	s.step(DT) # inside 1.8 m: the telegraph starts
-	var winding: bool = sh.state == Sprite.State.WINDUP and c.player.health.hp == 100.0
+	s.step(DT) # inside 1.5 m: the telegraph starts
+	var winding: bool = sh.state == Sprite.State.WINDUP and c.player.health.hp == 1000.0
 	steps(c, 0.3) # 0.32 s into the windup
 	var before_hit: float = c.player.health.hp
 	steps(c, 0.05)
-	check.call(winding and before_hit == 100.0 and c.player.health.hp == 88.0, "1.5 m away: a 0.35 s telegraph, then 12 damage (hp %.0f)" % c.player.health.hp)
+	check.call(winding and before_hit == 1000.0 and c.player.health.hp == 970.0 and sh.frenzy == 1, "1 m away: a 0.35 s telegraph, then 30 damage (hp %.0f), one frenzy stack" % c.player.health.hp)
+	var iv1: float = sh.current_interval()
 	steps(c, 3.6 - 0.35 - DT * 2.0)
-	check.call(sh.hits == 3 and is_equal_approx(c.player.health.hp, 64.0), "in contact: one strike every 1.2 s (%d hits in 3.6 s, hp %.0f)" % [sh.hits, c.player.health.hp])
+	check.call(absf(iv1 - 1.0 / 1.2) < 0.001 and sh.hits >= 5 and sh.frenzy == mini(sh.hits, 5) and is_equal_approx(c.player.health.hp, 1000.0 - 30.0 * sh.hits), "in contact: each hit adds +20%% attack speed (%d hits in 3.6 s, %d stacks, hp %.0f)" % [sh.hits, sh.frenzy, c.player.health.hp])
+	check.call(absf(sh.current_interval() - 0.5) < 0.001, "5 stacks: +100%%, one strike every 0.50 s (%.3f)" % sh.current_interval())
+	put_player(c, Vector3(60, 0, -40)) # 102 m: it gives up, no more hits
+	await tree.physics_frame
+	sh.pounce_ready = s.run.time + 20.0
+	steps(c, 5.2)
+	check.call(sh.frenzy == 0, "5 s without a hit: the stacks are gone")
 	# Stepping back during the telegraph dodges it.
 	c.player.health.reset()
 	put_enemy(sh, Vector3(60, 0, 62), 0.0)
-	put_player(c, Vector3(60, 0, 60.5))
+	put_player(c, Vector3(60, 0, 60.8)) # 1.2 m
 	await tree.physics_frame
 	steps(c, 0.2)
-	put_player(c, Vector3(60, 0, 58.5)) # 3.5 m: out of reach
+	put_player(c, Vector3(60, 0, 59)) # 3 m: out of reach
 	await tree.physics_frame
 	steps(c, 0.25)
-	check.call(sh.strikes == 1 and sh.hits == 0 and c.player.health.hp == 100.0, "stepping back during the telegraph dodges the strike")
+	check.call(sh.strikes == 1 and sh.hits == 0 and c.player.health.hp == 1000.0, "stepping back during the telegraph dodges the strike")
 
-	# Disengage: past 24 m it walks home and roams; the combat countdown then runs 3 s [R12].
-	put_enemy(sh, Vector3(60, 0, 70), 0.0)
-	put_player(c, Vector3(60, 0, 57)) # 13 m: chasing (pounce on cooldown)
+	# Disengage: past 45 m it walks home and roams; the combat countdown then runs 3 s [R12].
+	put_enemy(sh, Vector3(110, 0, 70), 0.0)
+	put_player(c, Vector3(100, 0, 70)) # 10 m: chasing (pounce on cooldown)
 	await tree.physics_frame
-	sh.pounce_ready = s.run.time + 10.0
+	sh.pounce_ready = s.run.time + 20.0
 	steps(c, 0.2)
 	var hunting: bool = sh.state == Sprite.State.CHASE
-	put_player(c, Vector3(60, 0, 30)) # ~35 m
+	put_player(c, Vector3(10, 0, 10)) # ~115 m
 	await tree.physics_frame
 	s.step(DT)
 	var t_drop: float = s.run.time
-	check.call(hunting and sh.state == Sprite.State.DISENGAGE and not sh.aggroed, "past 24 m it disengages")
+	check.call(hunting and sh.state == Sprite.State.DISENGAGE and not sh.aggroed, "past 45 m it disengages")
 	var home_t := -1.0
-	for i in int(round(6.0 / DT)):
+	for i in int(round(8.0 / DT)):
 		s.step(DT)
 		if sh.state == Sprite.State.IDLE_ROAM:
 			home_t = s.run.time
 			break
 	check.call(home_t > 0.0 and flat(sh.global_position).distance_to(flat(sh.origin)) <= 0.7, "back at its origin, roaming again (%.2f m off)" % flat(sh.global_position).distance_to(flat(sh.origin)))
 	var t_back: float = s.run.time
-	put_enemy(sh, Vector3(60, 0, 70), 0.0) # aggro again, then drop it: time the grace
-	put_player(c, Vector3(60, 0, 57))
+	put_enemy(sh, Vector3(110, 0, 70), 0.0) # aggro again, then drop it: time the grace
+	put_player(c, Vector3(100, 0, 70))
 	await tree.physics_frame
-	sh.pounce_ready = s.run.time + 10.0
+	sh.pounce_ready = s.run.time + 20.0
 	steps(c, 0.2)
-	put_player(c, Vector3(60, 0, 30))
+	put_player(c, Vector3(10, 0, 10))
 	await tree.physics_frame
 	s.step(DT)
 	t_drop = s.run.time
@@ -266,14 +297,14 @@ static func run(check: Callable, c: Node3D) -> void:
 	var still: bool = c.director.in_combat
 	steps(c, 0.2)
 	check.call(t_back > 0.0 and in_c and still and not c.director.in_combat and c.director.OUT_OF_COMBAT_S == 3.0, "in combat until 3 s after the last aggro drops, then out [R12]")
-	# A hit from past 24 m turns it toward the player, then it gives up again.
-	put_enemy(sh, Vector3(60, 0, 70), 0.0)
-	put_player(c, Vector3(60, 0, 40)) # 30 m
+	# A hit from past 45 m turns it toward the player, then it gives up again.
+	put_enemy(sh, Vector3(110, 0, 70), 0.0)
+	put_player(c, Vector3(10, 0, 10)) # ~117 m
 	await tree.physics_frame
 	sh.health.apply(DamagePacket.new(96010, "player", "player", 1.0, "blast"), s.run.time)
 	var provoked: bool = sh.state == Sprite.State.CHASE
 	s.step(DT)
-	check.call(provoked and sh.state == Sprite.State.DISENGAGE, "hurt from 30 m: it turns to chase, then disengages at once (past 24 m)")
+	check.call(provoked and sh.state == Sprite.State.DISENGAGE, "hurt from 117 m: it turns to chase, then disengages at once (past 45 m)")
 
 	# Kills: EXP straight from the kill [Sir: no orbs]; respawn after 12 s, away from the player.
 	var pr: RefCounted = s.progression
@@ -322,7 +353,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	await tree.physics_frame
 	s.input.open_overlay("grimoire")
 	steps(c, 0.5)
-	check.call(s.input.context == InputRouter.Context.GAMEPLAY and c.player.health.hp < 100.0, "a strike closes the overlay")
+	check.call(s.input.context == InputRouter.Context.GAMEPLAY and c.player.health.hp < 1000.0, "a strike closes the overlay")
 
 	# Pause freezes the Sprite.
 	var esc := InputEventKey.new(); esc.physical_keycode = KEY_ESCAPE; esc.keycode = KEY_ESCAPE; esc.pressed = true
@@ -366,16 +397,16 @@ static func run(check: Callable, c: Node3D) -> void:
 	put_player(c, Vector3(84, 0, 23)) # 13.6 m, past the pillar's edge
 	await tree.physics_frame
 	s.step(DT)
-	check.call(hidden_calm and sh.state == Sprite.State.CHASE, "aggro needs line of sight: behind a pillar at 15 m it stays calm, in the open it chases [spec P3]")
+	check.call(hidden_calm and sh.state == Sprite.State.CHASE, "detection needs line of sight: behind a pillar at 15 m it stays calm, in the open it chases [spec P3]")
 	# HP bar [spec P3]: hidden at full HP, shown and scaled once hurt, gone on death.
 	put_enemy(sh, Vector3(80, 0, 36), 180.0)
 	sh.inert = true
 	var full_hidden: bool = not sh.hp_bar.visible
-	sh.health.apply(DamagePacket.new(97001, "test", "player", 30.0, "blast"), s.run.time)
+	sh.health.apply(DamagePacket.new(97001, "test", "player", 125.0, "blast"), s.run.time)
 	var shown: bool = sh.hp_bar.visible and absf(sh.bar_fraction() - 0.75) < 0.02
 	sh.health.apply(DamagePacket.new(97002, "test", "player", 500.0, "blast"), s.run.time)
 	var gone: bool = not sh.hp_bar.visible
 	put_enemy(sh, Vector3(80, 0, 36), 180.0)
-	check.call(full_hidden and shown and gone and not sh.hp_bar.visible, "enemy HP bar: hidden at full HP, 75% after 30 damage, hidden on death and after a respawn")
+	check.call(full_hidden and shown and gone and not sh.hp_bar.visible, "enemy HP bar: hidden at full HP, 75% after 125 damage, hidden on death and after a respawn")
 	s.restart()
 	await tree.physics_frame

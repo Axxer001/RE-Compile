@@ -118,9 +118,9 @@ static func run(check: Callable, c: Node3D) -> void:
 	steps(c, 0.3)
 	check.call(vfx._flashes.all(func(f): return not f[0].visible), "the flashes end after 0.15 s")
 
-	# Cultivate: embers on the hands while it lasts.
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, s.run.time)
+	# Cultivate: embers by the wand while it lasts.
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, s.run.time)
 	c.publish(DT)
 	var on: bool = pc.aura_embers != null and vfx.loop_on(pc.aura_embers) and pc.aura_embers.name == "Loop_cultivate"
 	pc.cultivate_until = s.run.time

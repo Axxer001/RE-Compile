@@ -21,6 +21,7 @@ var ads_slider: HSlider
 var hip_value: Label
 var ads_value: Label
 var toggles := {}
+var book_left_box: CheckBox
 var grass_slider: HSlider
 var grass_value: Label
 # Graphics tab [Sir, 2026-11-14]
@@ -33,7 +34,6 @@ const GFX_OPTIONS := {
 	"preset": [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["custom", "Custom"]],
 	"window_mode": [[0, "Windowed"], [1, "Borderless fullscreen"], [2, "Exclusive fullscreen"]],
 	"window_size": [[0, "1280 x 720"], [1, "1600 x 900"], [2, "1920 x 1080"], [3, "2560 x 1440"]],
-	"pixel_scale": [[1, "1x (full resolution)"], [2, "2x"], [3, "3x (default)"], [4, "4x (chunkiest)"]],
 	"fps_cap": [[0, "Unlimited"], [60, "60"], [120, "120"], [144, "144"], [165, "165"]],
 	"shadows": [[0, "Off"], [1, "Low"], [2, "High"]],
 	"effects": [[0, "Low"], [1, "Medium"], [2, "High"]],
@@ -84,6 +84,11 @@ func setup(s: RefCounted) -> void:
 		c.toggled.connect(func(on): settings.set_value(key[0], on))
 		col.add_child(c)
 		toggles[key[0]] = c
+	book_left_box = CheckBox.new() # the held grimoire's hand [Sir, 2026-11-20]: right by default
+	book_left_box.name = "BookLeft"
+	book_left_box.text = "Grimoire in the left hand (wand in the right)"
+	book_left_box.toggled.connect(func(on): settings.set_value("book_hand", "left" if on else "right"))
+	col.add_child(book_left_box)
 
 	for k in [["master", "Master volume"], ["music", "Music"], ["ambience", "Ambience"], ["sfx", "Effects"], ["ui", "Interface"]]:
 		var vr := _slider_row(col, k[1], 0.0, 1.0, 0.05)
@@ -149,7 +154,6 @@ func _build_graphics(col: VBoxContainer) -> void:
 	_heading("Display")
 	_option_row("window_mode", "Window mode")
 	_option_row("window_size", "Window size (windowed)")
-	_option_row("pixel_scale", "Pixel scale (3D resolution)")
 	_check_row("vsync", "VSync")
 	_option_row("fps_cap", "Frame rate cap")
 	_gfx_slider("fov", "Field of view (deg)", 70.0, 110.0, 1.0)
@@ -160,7 +164,6 @@ func _build_graphics(col: VBoxContainer) -> void:
 	_gfx_slider("grass_distance", "Grass distance (m)", 20.0, 120.0, 5.0)
 	_option_row("effects", "Spell effects quality")
 	_heading("Look and comfort")
-	_check_row("colour16", "16-bit colour")
 	_option_row("film_grain", "Film grain")
 	_check_row("camera_shake", "Camera shake")
 
@@ -254,6 +257,7 @@ func refresh() -> void:
 	if grass_slider: grass_slider.set_value_no_signal(settings.grass_distance)
 	for k in volume_sliders: volume_sliders[k].set_value_no_signal(settings.volumes[k])
 	for k in toggles: toggles[k].set_pressed_no_signal(settings.get(k))
+	if book_left_box: book_left_box.set_pressed_no_signal(String(settings.book_hand) == "left")
 	_refresh_values()
 	for action in rows:
 		for slot in Settings.SLOTS:

@@ -25,3 +25,12 @@ builds/
 Thumbs.db
 .vscode/
 .vs/
+# Claude Code Game Studios (kit v1.3.0, 2026-11-15): local, per-session files
+.claude/settings.local.json
+CLAUDE.local.md
+project.local.yaml
+production/session-logs/
+production/session-state/
+.claude/agent-memory/
+.claude/worktrees/
+.scratch/

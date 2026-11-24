@@ -9,6 +9,8 @@ extends Node3D
 #   - A dummy yard in the south-west: training dummies that never die and take
 #     no damage, but show every hit as a damage number and a running total.
 #     Some stand on platforms, some strafe.
+#   - An AoE cluster [Sir, 2026-11-14]: 13 still dummies packed 2 m apart (a
+#     centre and two rings, 8 m across) north of the arrival pad, for blasts.
 #   - A target range in the south-east: boards at 10, 20, 30, 50 and 80 m from a
 #     firing line; a hit flashes the board and counts.
 #   - The return portal behind the arrival pad.
@@ -49,6 +51,17 @@ const DUMMIES := [
 	[85, 145, 0, 0], [85, 175, 0, 0], [15, 175, 0, 0],
 ]
 const STRAFE_SPEED := 2.5
+# The AoE cluster (local): a centre dummy, 6 at 2 m and 6 at 4 m (hex packed, 2 m apart).
+const CLUSTER_AT := Vector3(101, 0, 155)
+const CLUSTER_RINGS := [[1, 0.0], [6, 2.0], [6, 4.0]] # [count, radius]
+
+static func cluster_spots() -> Array:
+	var out := []
+	for ring in CLUSTER_RINGS:
+		for k in int(ring[0]):
+			var a: float = TAU * float(k) / float(ring[0]) + (PI / 6.0 if float(ring[1]) > 3.0 else 0.0)
+			out.append(CLUSTER_AT + Vector3(cos(a), 0, sin(a)) * float(ring[1]))
+	return out
 # Target range: boards at these distances from the firing line (local z 190), three per distance.
 const RANGE_LINE_Z := 190.0
 const RANGE_X := [125.0, 150.0, 175.0]
@@ -77,6 +90,7 @@ var sun: DirectionalLight3D
 var dummies: Array = []       # {id, body, health, label, base, strafe, pos, total, last_hit_t, hits}
 var boards: Array = []        # {id, body, health, mat, dist, hits, flash}
 var forest_portal: Node3D
+var forest_open := true          # the camp's portal is there (Map 1 unloads the camp behind the player)
 var return_portal: Node3D
 var _portal_ready_at := 0.0
 var _locked_notice_at := -INF
@@ -108,7 +122,7 @@ func build(world: Node3D) -> void:
 	return_portal = _portal(field, RETURN_PORTAL, 0.0, "ReturnPortal")
 	_label(field, "TO THE FOREST", RETURN_PORTAL + Vector3(0, PORTAL_SIZE.y + 0.6, 0), 0.012)
 	forest_portal = _portal(self, FOREST_PORTAL, 90.0, "ForestPortal")
-	_label(self, "TRAINING FIELD", FOREST_PORTAL + Vector3(0, PORTAL_SIZE.y + 0.6, 0), 0.012)
+	_label(forest_portal, "TRAINING FIELD", Vector3(0, PORTAL_SIZE.y + 0.6, 0), 0.012) # on the portal: it goes with it
 	field.visible = false
 
 # ---- the field ------------------------------------------------------------------------------
@@ -137,6 +151,7 @@ func _ground() -> void:
 	_solid(field, Vector3(150, 0.02, RANGE_LINE_Z), Vector3(80, 0.04, 0.4), line, "firing_line", false)
 	_label(field, "TARGET RANGE", Vector3(150, 2.6, RANGE_LINE_Z + 1.5), 0.014)
 	_label(field, "TRAINING DUMMIES", Vector3(50, 3.2, 180), 0.014)
+	_label(field, "AOE CLUSTER", CLUSTER_AT + Vector3(0, 3.6, 5.5), 0.014)
 	_label(field, "MOVEMENT DRILLS", Vector3(65, 4.5, 92), 0.016)
 	_label(field, "ROCK FORMATIONS", Vector3(165, 4.5, 8), 0.016)
 
@@ -195,6 +210,12 @@ func _dummy_yard() -> void:
 		var h: float = d[2]
 		if h > 0.0: _solid(field, Vector3(d[0], h * 0.5, d[1]), Vector3(3, h, 3), plat, "dummy_platform_%d" % i)
 		dummies.append(_dummy(i, Vector3(d[0], h, d[1]), float(d[3])))
+	var n0 := DUMMIES.size()
+	var spots := cluster_spots()
+	for k in spots.size():
+		var cd := _dummy(n0 + k, spots[k], 0.0)
+		cd["cluster"] = true
+		dummies.append(cd)
 
 func _dummy(i: int, local_at: Vector3, strafe: float) -> Dictionary:
 	var body := StaticBody3D.new()
@@ -347,6 +368,15 @@ func _portal(parent: Node3D, at: Vector3, yaw: float, nm: String) -> Node3D:
 			_solid(holder, c, size, null, "frame_col")
 	return holder
 
+## The camp's portal with the camp [Sir, 2026-11-22]: Map 1 unloads the camp 22 m into
+## Pathway #0, and the corridor may later pass near the camp's spot. Off: hidden (frame,
+## sign and all), not solid, not walked through. A new run turns it back on.
+func set_forest_portal(on: bool) -> void:
+	forest_open = on
+	if forest_portal == null: return
+	forest_portal.visible = on
+	for cs in forest_portal.find_children("*", "CollisionShape3D", true, false): (cs as CollisionShape3D).disabled = not on
+
 func portal_open() -> bool:
 	return not main.director.in_combat
 
@@ -363,7 +393,7 @@ func check_portals(now: float) -> String:
 	if p.health.dead: return ""
 	var open := portal_open()
 	_tint_portals(open)
-	var near_forest := _flat(p.global_position).distance_to(_flat(FOREST_PORTAL)) < PORTAL_R and not active
+	var near_forest := _flat(p.global_position).distance_to(_flat(FOREST_PORTAL)) < PORTAL_R and not active and forest_open
 	var near_return := _flat(p.global_position).distance_to(_flat(ORIGIN + RETURN_PORTAL)) < PORTAL_R and active
 	if not (near_forest or near_return): return ""
 	if now < _portal_ready_at: return ""
@@ -401,7 +431,14 @@ func enter() -> void:
 	var moon := _moon()
 	if e:
 		_night = {"fog_density": e.fog_density, "fog_light_color": e.fog_light_color, "ambient_light_color": e.ambient_light_color,
-			"ambient_light_energy": e.ambient_light_energy, "vfog": e.volumetric_fog_density, "vfog_albedo": e.volumetric_fog_albedo}
+			"ambient_light_energy": e.ambient_light_energy, "vfog": e.volumetric_fog_density, "vfog_albedo": e.volumetric_fog_albedo,
+			"bg": e.background_color, "fog_begin": e.fog_depth_begin, "fog_end": e.fog_depth_end, "far": main.player.camera.far}
+		# Daylight [2026-11-20]: no sky shader any more: a day-blue background and fog
+		# pushed out to the horizon, the camera's far clip opened up.
+		e.background_color = Color(0.55, 0.72, 0.9)
+		e.fog_depth_begin = 60.0
+		e.fog_depth_end = 400.0
+		main.player.camera.far = 500.0
 		e.fog_density = 0.0012
 		e.fog_light_color = Color(0.6, 0.72, 0.88)
 		e.ambient_light_color = Color(0.72, 0.76, 0.82)
@@ -440,6 +477,10 @@ func _restore_night() -> void:
 		e.ambient_light_energy = _night.ambient_light_energy
 		e.volumetric_fog_density = _night.vfog
 		e.volumetric_fog_albedo = _night.vfog_albedo
+		e.background_color = _night.bg
+		e.fog_depth_begin = _night.fog_begin
+		e.fog_depth_end = _night.fog_end
+		main.player.camera.far = _night.far
 		var sky: ShaderMaterial = e.sky.sky_material as ShaderMaterial if e.sky else null
 		if sky and _night.has("sky"):
 			for k in _night.sky: sky.set_shader_parameter(k, _night.sky[k])
@@ -509,6 +550,15 @@ func _on_hit(_packet: RefCounted, applied: float, t: Dictionary) -> void:
 
 static func _fmt(v: float) -> String:
 	return ("%.0f" % v) if v >= 10.0 else ("%.1f" % v)
+
+# A dummy's effect icons, over its running total [2026-11-14]: the same row as a Sprite's.
+const StatusIcons = preload("res://scripts/ui/status_icons.gd")
+const STATUS_Y := 2.75
+func set_statuses(d: Dictionary, list: Array) -> void:
+	var ids: Array = list.map(func(x): return x.id)
+	if ids == d.get("status_ids", []): return
+	d["status_ids"] = ids
+	d["status_row"] = StatusIcons.update_row(d.body, d.get("status_row"), ids, STATUS_Y)
 
 func tick(delta: float, now: float) -> void:
 	if not active: return

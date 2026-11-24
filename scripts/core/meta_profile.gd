@@ -1,12 +1,13 @@
 extends RefCounted
 # What outlives a death (Sir, handoff §10 R5, "knowledge is permanent"):
-# unlocked Grimoire pages, the Adventurer Rank once earned, and each stat's
-# chant difficulty tier. Everything else (level, EXP, points, chant gains,
-# HP/MP, loadout, mission kills) belongs to the run and resets on death.
+# unlocked Grimoire pages and the Adventurer Rank once earned. Everything else
+# (level, EXP, points, chant gains, HP/MP, loadout, mission kills) belongs to
+# the run and resets on death; so do the chant tiers, back to tier 1 [Sir,
+# 2026-11-14] (a restart from the pause menu is not a death and keeps them).
 # Saved to user://profile.cfg by the real game; path "" (tests) saves nothing.
 
 const PATH := "user://profile.cfg"
-const START_PAGES := ["scorch_and_burn", "cultivate", "dragons_breath", "firefly", "explosion"] # known from the start [handoff §5]; the three Rank E spells for testing [Sir, 2026-11-14]
+const START_PAGES := ["scorch_and_burn", "cultivate"]
 
 signal save_failed(error: int)
 
@@ -101,4 +102,5 @@ func note_chant() -> void:
 
 func note_death(run_s: float) -> void:
 	records.deaths = int(records.deaths) + 1
+	chant_tier = {} # every stat's chant back to tier 1
 	records.longest_run_s = maxf(float(records.longest_run_s), run_s)

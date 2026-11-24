@@ -21,8 +21,10 @@ var chant_streak := 0
 func _init(stat_container: RefCounted) -> void:
 	stats = stat_container
 
+# EXP to the next level [Sir, 2026-11-15]: 50 x l^1.3 (was 100 x l^1.4). Kill EXP is per
+# enemy (Sprite 25, Ghoul 35, Mortus 200: each actor's `kill_exp`).
 static func exp_required(l: int) -> int:
-	return int(floor(100.0 * pow(float(l), 1.4)))
+	return int(floor(50.0 * pow(float(l), 1.3)))
 
 # Points for reaching level `l`: 1 + 1 per 10 levels (lvl 10-19 -> 2 ...).
 static func points_for_level(l: int) -> int:

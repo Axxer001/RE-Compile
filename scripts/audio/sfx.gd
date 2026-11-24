@@ -24,8 +24,19 @@ const RECIPES := {
 	"firefly_pop": [0.12, -12.0, 18.0],  # one missile's hit (capped: see play_capped)
 	"charge_hum": [2.0, -9.0, 40.0],     # Explosion's charge, looped; it rises in pitch and volume to the blast
 	"nuke": [3.6, 0.0, 0.0],             # the eruption: its own long-range player (boom())
+	# The Phoenix set [2026-11-14]
+	"phoenix_climb": [2.0, -6.0, 30.0],  # Flight's rising whoosh, looped through the climb and hover
+	"phoenix_dive": [2.6, -2.0, 40.0],   # the dive: a falling roar (the boom lands at impact)
+	"rain_loop": [2.0, -7.0, 40.0],      # Call's storm of fire, looped while it rains
+	"rebirth": [1.6, -2.0, 40.0],        # Rise of the Phoenix: a rush of flame and a bright chord
+	# The Gambler set [2026-11-14]
+	"dice_rattle": [0.6, -6.0, 12.0],    # Let it Ride: the die clatters and lands
+	"coin_clink": [0.25, -9.0, 20.0],    # Heads: a coin strikes (each bounce too)
+	"ka_ching": [0.7, -4.0, 30.0],       # Tails' blast and the pockets spilling
+	"jackpot": [1.8, -2.0, 30.0],        # a 6: the jackpot fanfare
+	"addiction_thud": [1.0, -2.0, 20.0], # Gambling Addiction sets in: a low, heavy thud
 }
-const LOOPED := ["breath_loop", "charge_hum"]
+const LOOPED := ["breath_loop", "charge_hum", "phoenix_climb", "rain_loop"]
 # The boom carries across the 150 m forest: inverse-distance falloff with a
 # wide unit size (gain = unit / distance: -11.5 dB at 150 m), capped at 0 dB up
 # close; the recipe peaks at 0.8, so it never clips the master bus.
@@ -242,6 +253,43 @@ static func _render(recipe: String) -> AudioStreamWAV:
 				phase += TAU * (48.0 - 18.0 * u) / RATE
 				var env := (1.0 - exp(-t * 80.0)) * exp(-t * 1.1)
 				v = (lp * 1.9 + sin(phase) * 0.9 + noise * 0.6 * exp(-t * 12.0)) * env * 0.3
+			"phoenix_climb": # wind rushing past: band-limited noise with a slow swell (loops cleanly)
+				lp += (noise - lp) * 0.3
+				v = lp * (0.6 + 0.4 * sin(TAU * u)) * 0.8
+			"phoenix_dive": # a falling roar: noise that darkens and grows as it drops
+				lp += (noise - lp) * (0.5 - 0.4 * u)
+				v = lp * (0.3 + 0.7 * u) * 0.9
+			"rain_loop": # crackling fire: noise bursts on a low bed
+				lp += (noise - lp) * 0.12
+				v = lp * 0.5 + noise * 0.35 * float(rng.randf() < 0.03)
+			"rebirth": # a rush of flame, then a rising major chord
+				lp += (noise - lp) * 0.25
+				phase += TAU * (330.0 + 220.0 * u) / RATE
+				v = lp * exp(-t * 2.5) * 0.6 + (sin(phase) + 0.5 * sin(phase * 1.25) + 0.4 * sin(phase * 1.5)) * minf(1.0, t * 4.0) * exp(-t * 1.6) * 0.22
+			"dice_rattle": # five clacks that slow and soften, then the die settles
+				var clack := 0.0
+				for k in 5:
+					var at := 0.07 * k + 0.012 * k * k
+					if t >= at: clack += exp(-(t - at) * 90.0) * (1.0 - 0.13 * k)
+				lp += (noise - lp) * 0.6
+				v = lp * clack * 0.7
+			"coin_clink": # a bright metallic ping: inharmonic partials
+				phase += TAU * 2637.0 / RATE
+				v = (sin(phase) + 0.6 * sin(phase * 1.52) + 0.35 * sin(phase * 2.31)) * exp(-t * 18.0) * 0.32 + noise * exp(-t * 200.0) * 0.3
+			"ka_ching": # the drawer clunk, then the bell
+				phase += TAU * (1975.5 if t > 0.12 else 140.0) / RATE
+				if t < 0.12: v = (noise * 0.5 + sin(phase) * 0.6) * exp(-t * 35.0)
+				else: v = (sin(phase) + 0.5 * sin(phase * 2.0) + 0.3 * sin(phase * 2.76)) * exp(-(t - 0.12) * 4.0) * 0.34
+			"jackpot": # a rising major arpeggio over a shimmer
+				var notes := [523.25, 659.25, 783.99, 1046.5]
+				var ni := mini(int(t / 0.18), 3)
+				phase += TAU * float(notes[ni]) / RATE
+				var tt := t - 0.18 * ni
+				v = (sign(sin(phase)) * 0.18 + sin(phase * 2.0) * 0.12) * exp(-tt * (2.0 if ni == 3 else 6.0)) + noise * 0.05 * sin(PI * u)
+			"addiction_thud": # a deep falling thump with a dull ring
+				phase += TAU * (70.0 - 35.0 * u) / RATE
+				lp += (noise - lp) * 0.05
+				v = sin(phase) * exp(-t * 4.0) * 0.8 + lp * exp(-t * 10.0) * 0.4
 			"chime":
 				var f := 880.0 if t < 0.18 else 1318.5
 				var tt := t if t < 0.18 else t - 0.18

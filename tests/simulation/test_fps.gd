@@ -93,7 +93,9 @@ static func run(check: Callable, c: Node3D) -> void:
 	check.call(c.try_interact(true) == "" and c.try_interact(false) == "", "F with nothing under the crosshair does nothing")
 
 	# Slide gap (1.25 m opening in a 0.4 m wall at z 30): standing is blocked,
-	# crouching passes, standing up under it is refused.
+	# crouching passes, standing up under it is refused. Enemies parked: a roaming
+	# Sprite's pounce (5-10 m since 2026-11-15b) would Concuss the walk [movement only].
+	c.park_enemies()
 	place(c, Vector3(60, 0, 31.9), 0.0)
 	hold(c, keys, [KEY_W], 2.0)
 	check.call(p.global_position.z > 30.45, "standing player cannot pass the 1.25 m slide gap (z %.2f)" % p.global_position.z)

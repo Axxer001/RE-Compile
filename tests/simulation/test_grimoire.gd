@@ -39,7 +39,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	c.park_enemies()
 	var g: RefCounted = s.grimoire
 	var gp: CanvasLayer = c.grimoire_panel
-	check.call(g.listed() == ["scorch_and_burn", "cultivate", "dragons_breath", "firefly", "explosion"] and g.is_unlocked("cultivate") and g.is_unlocked("explosion") and not g.is_found("quick_step"), "fresh profile: Scorch and Burn, Cultivate and the three Rank E spells known and unlocked (spells for testing [Sir]); the other pages unseen")
+	check.call(g.listed() == ["scorch_and_burn", "cultivate"] and g.is_unlocked("cultivate") and not g.is_found("explosion") and not g.is_found("quick_step"), "fresh profile: only Scorch and Burn and Cultivate are known and unlocked")
 
 	# ---- banks and validator -------------------------------------------------------------
 	var banks_ok := true
@@ -116,11 +116,11 @@ static func run(check: Callable, c: Node3D) -> void:
 	if not Validator.check(gp.attempt.variant, gp.attempt.order).ok:
 		bad = gp.submit()
 	check.call(not bad.ok and not g.is_unlocked("quick_step") and s.stats.unspent == pts0 and gp.mode == "assembly" and gp.wrong.size() > 0, "a wrong submit flags the misplaced lines; no penalty, no reward, retry")
-	# A hit mid-puzzle restarts it with a fresh question; the panel stays [R1].
-	var idx0: int = gp.attempt.index
-	var n0: int = gp.attempts
+	# Damage closes and cancels the unfinished puzzle; reopening starts a new attempt.
 	c.player.health.apply(DamagePacket.new(97001, "test", "infected", 5.0, "bite"), s.run.time)
-	check.call(gp.visible and gp.mode == "assembly" and gp.attempts == n0 + 1 and int(gp.attempt.get("index", idx0)) != idx0 and s.input.context == InputRouter.Context.OVERLAY, "a hit during the unlock restarts it with a fresh question (variant %d -> %d), panel open [R1]" % [idx0, int(gp.attempt.get("index", -1))])
+	check.call(not gp.visible and gp.attempt.is_empty() and s.input.context == InputRouter.Context.GAMEPLAY and not g.is_unlocked("quick_step"), "damage closes the unlock without granting its page")
+	s.handle_action("grimoire")
+	gp.start_assembly("quick_step")
 	# A dash-immune hit does nothing.
 	c.player.health.grant_immunity(s.run.time + 1.0, ["*"], s.run.time)
 	var n1: int = gp.attempts
@@ -130,19 +130,19 @@ static func run(check: Callable, c: Node3D) -> void:
 	solve(gp)
 	var ok: Dictionary = gp.submit()
 	check.call(ok.ok and g.is_unlocked("quick_step") and s.meta.unlocked.has("quick_step") and gp.mode == "browse", "solved: the page unlocks (kept in the profile)")
-	check.call(s.progression.level == lvl0 + 1 and s.progression.exp == 50 and s.stats.unspent == pts0 + 3 + 1, "unlock reward: +3 stat points and +150 EXP (a level-up from 0/100: level %d, %d EXP, %d points)" % [s.progression.level, s.progression.exp, s.stats.unspent])
+	check.call(s.progression.level == lvl0 + 1 and s.progression.exp == 100 and s.stats.unspent == pts0 + 3 + 1, "unlock reward: +3 stat points and +150 EXP (a level-up from 0/50: level %d, %d EXP, %d points)" % [s.progression.level, s.progression.exp, s.stats.unspent])
 	check.call(gp.start_assembly("quick_step").is_empty() and not g.unlock("quick_step") and s.stats.unspent == pts0 + 4, "an unlocked page cannot be solved or unlocked again (no second reward)")
 	check.call(gp.page_text("quick_step").find("01: #include <iostream>") >= 0 and gp.page_text("quick_step").find("Lesson: C++ Output:") >= 0 and gp.page_text("quick_step").find("Cooldown: 10.0 s") >= 0, "the unlocked page shows its C++ code with line numbers, lesson, tip and cooldown")
 
 	# ---- equip -------------------------------------------------------------------------------
 	gp.select_page("quick_step")
-	check.call(gp.equip_selected("skill_2") == "ok" and String(c.pcombat.loadout.skill_2.id) == "quick_step", "click-to-equip: Quick Step onto [Q]")
-	check.call(gp.equip_selected("spell_1") == "wrong_kind" and gp.equip_selected("skill_1") == "duplicate", "the panel shows the loadout's refusals (wrong slot, already equipped)")
+	check.call(gp.equip_selected("spell_3") == "ok" and String(c.pcombat.loadout.spell_3.id) == "quick_step", "click-to-equip: Quick Step onto page 3")
+	check.call(gp.equip_selected("passive") == "wrong_kind" and gp.equip_selected("spell_4") == "duplicate", "the panel shows the loadout's refusals (wrong slot, already equipped)")
 	s.meta.unlock("sage_arts"); g.find("sage_arts")
 	gp.select_page("sage_arts")
 	check.call(gp.equip_selected("passive") == "rank" and gp.status_text.begins_with("Requires Rank D"), "a rank-D page at rank E: refused, with the reason")
-	check.call(gp.unequip("skill_2") == "ok" and c.pcombat.loadout.skill_2 == null, "a slot can be emptied")
-	gp.select_page("quick_step"); gp.equip_selected("skill_2")
+	check.call(gp.unequip("spell_3") == "ok" and c.pcombat.loadout.spell_3 == null, "a slot can be emptied")
+	gp.select_page("quick_step"); gp.equip_selected("spell_3")
 
 	# ---- hits while browsing close it [R1] ---------------------------------------------------
 	gp.select_page("cultivate")
@@ -172,8 +172,8 @@ static func run(check: Callable, c: Node3D) -> void:
 	s.step(DT)
 	g = s.grimoire
 	check.call(g.is_unlocked("quick_step") and g.listed().has("quick_step") and not g.is_found("ring_of_fire") and c.page_pickups.ring_of_fire.visible and not c.page_pickups.quick_step.visible, "after a death: unlocked pages are kept; a found-but-locked page is lost and back in the world")
-	check.call(s.progression.level == 1 and s.stats.unspent == 0 and c.pcombat.loadout.skill_2 == null and String(c.pcombat.loadout.skill_1.id) == "cultivate", "level, points and the loadout reset (start loadout again)")
-	check.call(c.pcombat.equip("skill_2", g.page("quick_step")) == "ok", "a kept page can be equipped in the next run")
+	check.call(s.progression.level == 1 and s.stats.unspent == 0 and c.pcombat.loadout.spell_3 == null and String(c.pcombat.loadout.spell_2.id) == "cultivate", "level, points and the loadout reset (start loadout again)")
+	check.call(c.pcombat.equip("spell_3", g.page("quick_step")) == "ok", "a kept page can be equipped in the next run")
 
 	# ---- the profile on disk ---------------------------------------------------------------
 	var m := MetaProfile.new()

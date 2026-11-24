@@ -1,5 +1,14 @@
 extends CharacterBody3D
-# Blighted Sprite, the MVP hostile (Tech Spec §4, plan P3). Built from the
+# Blighted Sprite [Common] -- reworked to Sir's spec 2026-11-15 (docs/plan-dark-forest-roster.md):
+#   melee, 500 HP, 30 damage, attack speed 1.00/s (+20% per hit landed on the
+#   player, max +100% / 5 stacks, reset after 5 s without a hit), 9 m/s,
+#   detection 50 m with line of sight, attack range 5 m; packs of 4.
+#   Pounce: at 15-20 m with line of sight, a straight jump-dash at 20 m/s toward
+#   where the player was (dodgeable; a tree or rock stops it): 60 damage +
+#   Concuss 1.5 s (-80% Mov/Atk Spd); 10 s cooldown. NinjaJump clips.
+# The base class of the Forest Ghoul and Kostas Mortus too: the per-actor
+# values below (hp_max ... kill_exp) are what a subclass overrides.
+# History: the MVP hostile (Tech Spec §4, plan P3). Built from the
 # Shambler (reference/shooter/scripts/actors/shambler.gd): same body,
 # navigation and clip handling, with the spec's state machine:
 #   IDLE_ROAM -(player <= 16 m and in sight)-> CHASE -(<= 1.8 m)-> WINDUP -0.35 s-> STRIKE
@@ -27,32 +36,38 @@ extends CharacterBody3D
 
 const DamagePacket = preload("res://scripts/combat/damage_packet.gd")
 const Health = preload("res://scripts/combat/health_component.gd")
-const OutfitBuilder = preload("res://scripts/actors/outfit_builder.gd")
-const BODY := "res://assets/quaternius/base_characters/Superhero_Male_FullBody.gltf"
-const ANIMS := "res://assets/quaternius/animations/UAL1_Standard.glb"
-const BodyModel = preload("res://scripts/actors/body_model.gd")
-const SKIN_TINT := Color(0.32, 0.22, 0.42) # blighted violet
+const HostileModels = preload("res://scripts/actors/hostile_models.gd")
+# Glowing eyes [graphics direction 2026-11-20]: silhouettes read in the dense fog.
+const EYE_COLOR := Color(0.85, 1.0, 0.35)
+const EYE_ENERGY := 4.0
+const EYE_R := 0.028
+var eye_color := EYE_COLOR
 
-enum State { IDLE_ROAM, CHASE, WINDUP, STRIKE, DISENGAGE, DEAD, CHARGE, DIVE }
+enum State { IDLE_ROAM, CHASE, WINDUP, STRIKE, DISENGAGE, DEAD, CHARGE, DIVE, STUN } # STUN: Kostas Mortus after a charge into a tree or rock
 
-const HP := 120.0             # [spec]
-const SPEED := 8.0            # [Sir R8] fixed (not the player's Mov Spd); the spec had 5.5
-const POUNCE_R := 20.0        # [Sir R12] starts a pounce at or inside this (was 10)
-const CHARGE_S := 0.5         # [Sir] stands still, telegraphing
-const DIVE_SPEED := 18.0      # [proposed]
-const DIVE_MAX := 25.0        # [proposed R12] metres across the ground (was 12)
-const POUNCE_DAMAGE := 20.0   # [Sir]
-const POUNCE_COOLDOWN_S := 6.0 # [proposed] per Sprite, from the dive's start
+const HP := 500.0             # [Sir 2026-11-15]
+const SPEED := 9.0            # [Sir 2026-11-15] m/s
+const POUNCE_MIN := 10.0      # [Map 1 spec §4, 2026-11-20: ranges scaled to the 30 m fog] no pounce this close (it just walks in to bite)
+const POUNCE_R := 15.0        # [Map 1 spec §4] a pounce starts within this, in sight
+const CHARGE_S := 2.0         # [Sir 2026-11-15b] the crouch before the dash
+const DIVE_SPEED := 20.0      # [Sir 2026-11-15] straight jump-dash
+const DIVE_MAX := 22.0        # [design] metres: to where the player was, plus a little
+const POUNCE_DAMAGE := 60.0   # [Sir 2026-11-15]
+const POUNCE_COOLDOWN_S := 15.0 # [Sir 2026-11-15b]
 const DIVE_HIT_R := 0.9       # [design] centre distance that counts as touching the player
-const CONCUSS_S := 1.5        # [proposed]
+const CONCUSS_S := 1.5        # [Sir]
 const CONCUSS_MULT := 0.2     # [Sir] -80% Mov Spd and Atk Spd
-const AGGRO_R := 16.0         # [spec]
-const DEAGGRO_R := 24.0       # [spec]
-const WINDUP_R := 1.8         # [spec] starts the telegraph
+const AGGRO_R := 35.0         # [Map 1 spec §4] detection, with line of sight
+const DEAGGRO_R := 45.0       # [Map 1 spec §4] loses track past this
+const WINDUP_R := 1.5         # [Sir 2026-11-15b] attack range: starts the telegraph
 const WINDUP_S := 0.35        # [spec]
-const ATTACK_INTERVAL := 1.2  # [spec] windup + recovery: one hit per 1.2 s in contact
-const DAMAGE := 12.0          # [spec]
-const STRIKE_REACH := 2.2     # [design] lands if still this close at the strike (stepping back dodges)
+const ATTACK_INTERVAL := 1.0  # [Sir 2026-11-15] attack speed 1.00 per second
+const DAMAGE := 30.0          # [Sir 2026-11-15]
+const STRIKE_REACH := 2.0     # [design] lands if still this close at the strike (stepping back dodges)
+const FRENZY_STEP := 0.2      # [Sir 2026-11-15] +20% attack speed per hit landed on the player
+const FRENZY_MAX := 5         # [Sir] +100% at most
+const FRENZY_RESET_S := 5.0   # [Sir] stacks clear after this long without landing a hit
+const KILL_EXP := 25          # [Sir 2026-11-15]
 const STRIKE_ARC := 70.0      # [design] degrees either side of facing
 const VREACH := 0.4           # [design R12] vertical gap between its body and the player's capsule that melee still reaches
 const MANTLE_MAX := 2.2       # [R12] the player's mantle height
@@ -95,12 +110,30 @@ var pounces := 0               # dives started (tests)
 var pounce_hits := 0           # dives that landed
 var rng := RandomNumberGenerator.new()
 var speed_mult := 1.0          # Scorched Slow and the like (the world sets it each tick)
+var atk_mult := 1.0            # Phoenix Concuss: attack speed (the strike cycle runs this much slower)
 var climbing := false          # going up a ledge face
 var climb_top := 0.0           # world y it climbs to
 var climb_dir := Vector3.ZERO
 var climbs := 0                # ledges climbed (tests)
 var dive_vel := Vector3.ZERO   # the leap's launch velocity
 var dive_hops := 0.0           # ground metres left on the leap
+# Per-actor values (the Sprite's; the Forest Ghoul and Kostas Mortus override them).
+var kind := "sprite"
+var hp_max := HP
+var move_speed := SPEED
+var aggro_r := AGGRO_R
+var deaggro_r := DEAGGRO_R
+var windup_r := WINDUP_R
+var strike_reach := STRIKE_REACH
+var can_climb := true          # [Sir 2026-11-15b] Sprites climb; the Ghoul and Mortus do not (they path on main's ground grid)
+var attack_interval := ATTACK_INTERVAL
+var damage := DAMAGE
+var kill_exp := KILL_EXP
+var resist := 1.0             # effects on it: duration, stat reduction and damage x this (Mortus 0.5)
+var displace_immune := false  # pulls, knockback and launches do nothing (Mortus)
+var frenzy := 0               # stacks of +20% attack speed (hits landed on the player)
+var frenzy_hit_at := -INF
+var hit_fx: Callable          # presentation: hit_fx.call(at) on a landed hit (main sets it)
 var health: Node
 var model: Node3D
 var anim: AnimationPlayer
@@ -126,7 +159,7 @@ func setup(id: String, at: Vector3, yaw_deg: float) -> void:
 	add_child(col)
 	health = Health.new()
 	health.name = "Health"
-	health.max_hp = HP
+	health.max_hp = hp_max
 	health.faction = "infected"
 	add_child(health)
 	health.died.connect(func(_p) -> void: _die())
@@ -136,26 +169,56 @@ func setup(id: String, at: Vector3, yaw_deg: float) -> void:
 	reset_to(origin, origin_yaw)
 
 func _build_model() -> void:
-	# The Quaternius base body (CC0), bare and tinted: a blighted forest creature.
-	model = (load(BODY) as PackedScene).instantiate()
-	model.name = "Model"
-	model.rotation.y = PI # Quaternius bodies face +Z; this body faces -Z
-	add_child(model)
-	var body := OutfitBuilder.body_mesh(model)
-	var skin: BaseMaterial3D = body.mesh.surface_get_material(0).duplicate()
-	skin.albedo_color = SKIN_TINT
-	skin.emission_enabled = true
-	skin.emission = Color(0.35, 0.1, 0.45)
-	skin.emission_energy_multiplier = 0.25
-	body.set_surface_override_material(0, skin)
-	_skin = skin
-	_skin_emission = skin.emission
-	_skin_energy = skin.emission_energy_multiplier
-	anim = AnimationPlayer.new()
-	anim.name = "Anim"
-	model.add_child(anim)
-	anim.root_node = NodePath("..")
-	anim.add_animation_library("", _library())
+	# The approved Blighted Sprite [asset swap 2026-11-24]: one skinned GLB whose
+	# claw scratch, all-fours anticipation and airborne clips replace the Quaternius
+	# body and the UAL stand-ins. Gameplay and collision are untouched.
+	var built: Dictionary = HostileModels.build(HostileModels.SPRITE_PATH, HostileModels.SPRITE_CLIPS, self)
+	model = built.model
+	anim = built.anim
+	_use_skins(built.skins)
+	_add_eyes()
+
+var eye_mesh: MeshInstance3D   # the glowing eyes (tests)
+
+# Glowing eyes: two small unshaded emissive spheres on the head bone, just proud
+# of the face (the body's own eyeballs sit in shaded sockets and read as dark).
+func _add_eyes() -> void:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = eye_color
+	mat.emission_enabled = true
+	mat.emission = eye_color
+	mat.emission_energy_multiplier = EYE_ENERGY
+	var found := model.find_children("*", "Skeleton3D", true, false)
+	if found.is_empty(): return
+	var skel := found[0] as Skeleton3D
+	var bone := "Head"
+	if skel.find_bone(bone) < 0: bone = "head"
+	var bi := skel.find_bone(bone)
+	if bi < 0: return
+	var att := BoneAttachment3D.new()
+	att.name = "Eyes"
+	att.bone_name = bone
+	skel.add_child(att)
+	var head_g: Transform3D = skel.global_transform * skel.get_bone_global_rest(bi)
+	var k: float = model.global_transform.basis.get_scale().x
+	var fwd: Vector3 = -global_transform.basis.z.normalized()
+	var right: Vector3 = global_transform.basis.x.normalized()
+	var ball := SphereMesh.new()
+	ball.radius = EYE_R
+	ball.height = EYE_R * 2.0
+	ball.radial_segments = 6
+	ball.rings = 3
+	for side in [-1.0, 1.0]:
+		var w: Vector3 = head_g.origin + (Vector3.UP * 0.095 + fwd * 0.14 + right * side * 0.03) * k # just proud of the face
+		var eye := MeshInstance3D.new()
+		eye.name = "EyeL" if side < 0.0 else "EyeR"
+		eye.mesh = ball
+		eye.material_override = mat
+		eye.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		eye.position = head_g.affine_inverse() * w
+		att.add_child(eye)
+		eye_mesh = eye
 
 static var _bar_tex := {}
 static func _bar_texture(c: Color) -> ImageTexture:
@@ -209,42 +272,7 @@ func set_statuses(list: Array) -> void:
 		slow_fx = Vfx.make_loop("slow")
 		if slow_fx: add_child(slow_fx)
 	Vfx.set_loop(slow_fx, slowed)
-	if status_row == null:
-		status_row = Node3D.new()
-		status_row.name = "StatusRow"
-		status_row.position.y = BAR_Y - 0.17 # just under the HP bar
-		add_child(status_row)
-	for ch in status_row.get_children():
-		status_row.remove_child(ch)
-		ch.queue_free()
-	for i in ids.size():
-		var def := StatusIcons.icon(ids[i])
-		var tx := StatusIcons.texture(ids[i])
-		var x := (i - (ids.size() - 1) * 0.5) * 0.2 # 0.18 m icons, side by side
-		if tx:
-			var sp := Sprite3D.new()
-			sp.texture = tx
-			sp.pixel_size = 0.18 / float(tx.get_width())
-			sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			sp.shaded = false
-			sp.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
-			sp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			sp.offset = Vector2(x / sp.pixel_size, 0)
-			sp.set_meta("status", ids[i])
-			status_row.add_child(sp)
-			continue
-		var l := Label3D.new()
-		l.text = def.glyph
-		l.modulate = def.color
-		l.outline_modulate = Color(0, 0, 0)
-		l.outline_size = 6
-		l.font_size = 40
-		l.pixel_size = 0.004
-		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		l.no_depth_test = false
-		l.offset = Vector2(x / l.pixel_size, 0)
-		l.set_meta("status", ids[i])
-		status_row.add_child(l)
+	status_row = StatusIcons.update_row(self, status_row, ids, BAR_Y - 0.22) # just under the HP bar
 	status_row.visible = not ids.is_empty() and not health.dead
 
 # Burn visual [R14]: a few rising embers (at most 12 alive) and a faint
@@ -254,12 +282,44 @@ const BURN_EMBERS := 12
 const BURN_GLOW := 0.3
 var embers: Node3D # Burn: Binbun flames on the body (12 ember particles without Binbun)
 var burning := false
+var burn_full := true # presentation: the nearest burning Sprites wear the flames; the rest glow and flicker [2026-11-14]
 var _skin: BaseMaterial3D
+var _skins: Array = [] # every surface material (the swapped models are multi-surface)
 var _skin_emission := Color.BLACK
 var _skin_energy := 0.0
-func set_burning(on: bool) -> void:
+
+# The swap's models carry one material per surface: a burn or slow glows on all of
+# them, and the first surface's look is what a restore returns to.
+func _use_skins(list: Array) -> void:
+	_skins = list
+	if _skins.is_empty(): return
+	_skin = _skins[0]
+	_skin_emission = _skin.emission
+	_skin_energy = _skin.emission_energy_multiplier
+
+func _set_emission(color: Color, energy: float) -> void:
+	for m in (_skins if not _skins.is_empty() else ([_skin] if _skin != null else [])):
+		(m as BaseMaterial3D).emission = color
+		(m as BaseMaterial3D).emission_energy_multiplier = energy
+func set_burning(on: bool, full := true) -> void:
+	if on and burning and full != burn_full: # still burning, moved in or out of the flames' nearest set
+		burn_full = full
+		_show_embers(full)
+		if full and _skin != null: _set_emission(_skin.emission, BURN_GLOW)
+		return
 	if on == burning: return
 	burning = on
+	burn_full = full
+	_show_embers(on and full)
+	if _skin != null:
+		_set_emission(Color(1.0, 0.45, 0.12) if on else _skin_emission, BURN_GLOW if on else _skin_energy)
+
+# Without flames, the glow flickers (0.15-0.3) so a far burning Sprite still reads as burning.
+func burn_flicker(now: float) -> void:
+	if not burning or burn_full or _skin == null: return
+	_set_emission(_skin.emission, BURN_GLOW * (0.75 + 0.25 * sin(now * 13.0 + float(get_instance_id() % 97))))
+
+func _show_embers(on: bool) -> void:
 	if embers == null and on:
 		embers = Vfx.make_loop("burn")
 		if embers:
@@ -268,9 +328,6 @@ func set_burning(on: bool) -> void:
 		else: _build_embers()
 	if embers is GPUParticles3D: (embers as GPUParticles3D).emitting = on
 	elif embers != null: Vfx.set_loop(embers, on)
-	if _skin != null:
-		_skin.emission = Color(1.0, 0.45, 0.12) if on else _skin_emission
-		_skin.emission_energy_multiplier = BURN_GLOW if on else _skin_energy
 
 func _build_embers() -> void:
 	var ep := GPUParticles3D.new()
@@ -308,30 +365,24 @@ func _build_embers() -> void:
 func bar_fraction() -> float:
 	return hp_fill.region_rect.size.x / BAR_W if hp_fill else 1.0
 
-static var _lib: AnimationLibrary
 # Presentation-only randomness (idle start phase) has its own generator so it can
 # never consume draws from the global sequence gameplay code uses.
 static var _anim_rng := RandomNumberGenerator.new()
-# Movement clips [Sir: rig + movement animation; attacks later]. Built from the
-# shared UAL1+UAL2 library (BodyModel.library): roam = zombie idle/shamble,
-# chase = sprint, pounce charge = crouch, dive = airborne, climb = ClimbUp.
-# "strike" stays Punch_Jab until attack animations are done.
-const SPRITE_CLIPS := {"idle": "zombie_idle", "walk": "zombie_walk", "run": "run", "strike": "bite",
-	"death": "death", "charge": "crouch", "air": "jump_air", "climb": "climb", "land": "land"}
-static func _library() -> AnimationLibrary:
-	if _lib != null: return _lib
-	_lib = AnimationLibrary.new()
-	var shared: AnimationLibrary = BodyModel.library()
-	for key in SPRITE_CLIPS:
-		var src: String = SPRITE_CLIPS[key]
-		if not shared.has_animation(src): src = "walk" if key in ["idle", "walk"] else "idle"
-		var a: Animation = shared.get_animation(src).duplicate()
-		if key == "climb": a.loop_mode = Animation.LOOP_LINEAR # held while scaling a face
-		_lib.add_animation(key, a)
-	return _lib
 
 # Back to its origin, alive and roaming. `origin_at` moves the origin (tests, spawns).
+var dormant := false
+var _ground_position := Vector3.INF
+var _ground_revision := -1
+
+func set_dormant(on: bool) -> void:
+	if dormant == on: return
+	dormant = on
+	if anim: anim.active = not on
+	if on: velocity = Vector3.ZERO
+
 func reset_to(at: Vector3, yaw_deg: float, _heard_before := -1) -> void:
+	set_dormant(false)
+	_ground_position = Vector3.INF
 	origin = at
 	origin_yaw = yaw_deg
 	position = at
@@ -345,6 +396,8 @@ func reset_to(at: Vector3, yaw_deg: float, _heard_before := -1) -> void:
 	pounces = 0
 	pounce_hits = 0
 	pounce_ready = 0.0
+	frenzy = 0
+	frenzy_hit_at = -INF
 	climbing = false
 	climbs = 0
 	speed_mult = 1.0
@@ -385,7 +438,7 @@ func _go(next: int) -> void:
 	timer = 0.0
 	replan = 0.0
 	struck = false
-	aggroed = next in [State.CHASE, State.WINDUP, State.STRIKE, State.CHARGE, State.DIVE]
+	aggroed = next in [State.CHASE, State.WINDUP, State.STRIKE, State.CHARGE, State.DIVE, State.STUN]
 
 static func _flat(v: Vector3) -> Vector2:
 	return Vector2(v.x, v.z)
@@ -416,106 +469,130 @@ static func _axis_distance(pt: Vector3, a: Vector3, b: Vector3) -> float:
 	var u := clampf((pt - a).dot(ab) / maxf(ab.length_squared(), 1e-9), 0.0, 1.0)
 	return pt.distance_to(a + ab * u)
 
-# ctx: {player, player_health, nav, los: Callable(from, to) -> bool}
+# ctx: {player, player_health, nav, los: Callable(from, to) -> bool, concuss, ray}
 func tick(delta: float, now: float, ctx: Dictionary) -> void:
 	timer += delta
 	if state == State.DEAD or inert or reserve: return # the death clip plays out; an inert dummy only stands
+	if frenzy > 0 and now - frenzy_hit_at >= FRENZY_RESET_S: frenzy = 0 # 5 s without landing a hit
+	think(delta, now, ctx)
+	_move(delta, ctx)
+
+# Attack interval with the frenzy stacks and any slow (atk_mult) applied.
+func current_interval() -> float:
+	return attack_interval / (1.0 + FRENZY_STEP * frenzy) / maxf(atk_mult, 0.05)
+
+# The telegraph: 0.35 s (slowed by atk_mult), never more than half the cycle.
+func windup_time() -> float:
+	return minf(WINDUP_S / maxf(atk_mult, 0.05), current_interval() * 0.5)
+
+# The decision step (a subclass replaces it); movement and animation follow in _move.
+func think(delta: float, now: float, ctx: Dictionary) -> void:
 	var p: CharacterBody3D = ctx.player
 	var alive: bool = not ctx.player_health.dead
 	var d := distance_to_player(p)
 	match state:
 		State.IDLE_ROAM:
-			if alive and d <= AGGRO_R and ctx.los.call(eye(), p.eye_position()): # [spec] range and line of sight
+			if alive and d <= aggro_r and ctx.los.call(eye(), p.eye_position()): # range and line of sight
 				_go(State.CHASE)
 			else:
 				_roam(delta, ctx.nav)
 		State.CHASE:
-			if not alive:
+			if not alive or d > deaggro_r:
 				_go(State.DISENGAGE)
-			elif d > DEAGGRO_R:
-				_go(State.DISENGAGE)
-			elif in_reach(p, WINDUP_R):
+			elif in_reach(p, windup_r):
 				velocity.x = 0; velocity.z = 0
 				_go(State.WINDUP)
-			elif d <= POUNCE_R and d > WINDUP_R * 0.5 and now + 1e-6 >= pounce_ready and not climbing and ctx.los.call(eye(), p.eye_position()):
+			elif can_pounce(d, now) and ctx.los.call(eye(), p.eye_position()):
 				velocity.x = 0; velocity.z = 0
 				_go(State.CHARGE)
 			else:
-				_walk_to(p.global_position, SPEED, delta, ctx.nav)
+				_walk_to(p.global_position, move_speed, delta, ctx.nav)
 		State.CHARGE:
 			velocity.x = 0; velocity.z = 0
 			_turn_toward(p.global_position, delta)
-			if timer + 1e-6 >= CHARGE_S:
-				# A ballistic leap at the player's centre as it is now (3D: high ground and mid-air too).
-				var ax := capsule_axis(p)
-				var aim: Vector3 = (ax[0] + ax[1]) * 0.5
-				var from := global_position + Vector3(0, HEIGHT * 0.5, 0)
-				var to := Vector3(aim.x - from.x, 0, aim.z - from.z)
-				dive_dir = to.normalized() if to.length() > 0.01 else facing
-				var ground := minf(DIVE_MAX, to.length())
-				var t_fly := maxf(ground, 0.5) / DIVE_SPEED
-				var rise := aim.y - from.y if to.length() <= DIVE_MAX else 0.0
-				dive_vel = dive_dir * DIVE_SPEED + Vector3.UP * ((rise + 0.5 * GRAVITY * t_fly * t_fly) / t_fly)
-				dive_left = ground + 0.5 # a little past the aim point, at most 25 m
-				dive_hit = false
-				pounces += 1
-				pounce_ready = now + POUNCE_COOLDOWN_S
-				_strike_serial += 1 # one action id for the whole dive
-				_go(State.DIVE)
+			if timer + 1e-6 >= CHARGE_S: _start_dive(p, now)
 		State.DIVE:
-			var spd := DIVE_SPEED * speed_mult
-			var step := spd * delta
-			if timer <= delta + 1e-6: velocity.y = dive_vel.y # the leap's launch
-			if dive_left > 0.0:
-				velocity.x = dive_dir.x * spd
-				velocity.z = dive_dir.z * spd
-				dive_left -= step
-			else:
-				velocity.x = 0; velocity.z = 0
-			var ax := capsule_axis(p)
-			var centre := global_position + Vector3(0, HEIGHT * 0.5, 0)
-			if not dive_hit and alive and _axis_distance(centre, ax[0], ax[1]) <= DIVE_HIT_R + step:
-				dive_hit = true
-				var r: String = ctx.player_health.apply(DamagePacket.new(_strike_serial, enemy_id, "infected", POUNCE_DAMAGE, "bite"), now)
-				if r == "applied" or r == "lethal":
-					pounce_hits += 1
-					if ctx.has("concuss"): ctx.concuss.call(now + CONCUSS_S, CONCUSS_MULT)
-				dive_left = 0.0
-			var landed := is_on_floor() and timer > 0.1 and velocity.y <= 0.0
-			if (dive_left <= 0.0 and landed) or (landed and dive_hit) or timer > 3.0 or (get_slide_collision_count() > 0 and timer > delta * 1.5 and is_on_wall()):
-				velocity.x = 0; velocity.z = 0
-				_go(State.CHASE if alive else State.DISENGAGE)
+			_dive(p, alive, delta, now, ctx)
 		State.WINDUP:
 			velocity.x = 0; velocity.z = 0
 			_turn_toward(p.global_position, delta)
-			if timer + 1e-6 >= WINDUP_S:
+			if timer + 1e-6 >= windup_time():
 				_go(State.STRIKE)
 				_strike(p, ctx.player_health, now, ctx.los)
 		State.STRIKE:
 			velocity.x = 0; velocity.z = 0
-			# Recovery: the rest of the 1.2 s cycle, then chase (or strike again).
-			if timer + 1e-6 >= ATTACK_INTERVAL - WINDUP_S:
-				if alive and in_reach(p, WINDUP_R): _go(State.WINDUP) # still in contact: the next 1.2 s cycle
+			# Recovery: the rest of the attack cycle, then chase (or strike again).
+			if timer + 1e-6 >= current_interval() - windup_time():
+				if alive and in_reach(p, windup_r): _go(State.WINDUP) # still in reach: the next cycle
 				else: _go(State.CHASE if alive else State.DISENGAGE)
 		State.DISENGAGE:
-			if alive and d <= AGGRO_R and _flat(global_position).distance_to(_flat(origin)) <= ARRIVE and ctx.los.call(eye(), p.eye_position()):
+			if alive and d <= aggro_r and _flat(global_position).distance_to(_flat(origin)) <= ARRIVE and ctx.los.call(eye(), p.eye_position()):
 				_go(State.CHASE) # home again and the player is still close
-			elif _walk_to(origin, SPEED, delta, ctx.nav):
+			elif _walk_to(origin, move_speed, delta, ctx.nav):
 				_go(State.IDLE_ROAM)
+
+# Pounce range [Map 1 spec §4]: 10-15 m, off cooldown, not climbing.
+func can_pounce(d: float, now: float) -> bool:
+	return d >= POUNCE_MIN and d <= POUNCE_R and now + 1e-6 >= pounce_ready and not climbing
+
+# The straight jump-dash: toward where the player stands now, a little past it, 22 m at most.
+func _start_dive(p: CharacterBody3D, now: float) -> void:
+	var to := Vector3(p.global_position.x - global_position.x, 0, p.global_position.z - global_position.z)
+	dive_dir = to.normalized() if to.length() > 0.01 else facing
+	facing = dive_dir
+	dive_left = minf(DIVE_MAX, to.length() + 2.0)
+	dive_vel = Vector3.UP * 4.0 # a low hop: it reads as a jump, the line stays straight
+	dive_hit = false
+	pounces += 1
+	pounce_ready = now + POUNCE_COOLDOWN_S
+	_strike_serial += 1 # one action id for the whole dash
+	_go(State.DIVE)
+
+func _dive(p: CharacterBody3D, alive: bool, delta: float, now: float, ctx: Dictionary) -> void:
+	var spd := DIVE_SPEED * speed_mult
+	var step := spd * delta
+	if timer <= delta + 1e-6: velocity.y = dive_vel.y
+	if dive_left > 0.0:
+		velocity.x = dive_dir.x * spd
+		velocity.z = dive_dir.z * spd
+		dive_left -= step
+	else:
+		velocity.x = 0; velocity.z = 0
+	var ax := capsule_axis(p)
+	var centre := global_position + Vector3(0, HEIGHT * 0.5, 0)
+	if not dive_hit and alive and _axis_distance(centre, ax[0], ax[1]) <= DIVE_HIT_R + step:
+		dive_hit = true
+		var r: String = ctx.player_health.apply(DamagePacket.new(_strike_serial, enemy_id, "infected", POUNCE_DAMAGE, "bite"), now)
+		if r == "applied" or r == "lethal":
+			pounce_hits += 1
+			if ctx.has("concuss"): ctx.concuss.call(now + CONCUSS_S, CONCUSS_MULT)
+			if hit_fx.is_valid(): hit_fx.call(p.global_position + Vector3(0, 1.0, 0))
+		dive_left = 0.0
+	var landed := is_on_floor() and timer > 0.1 and velocity.y <= 0.0
+	var blocked := get_slide_collision_count() > 0 and timer > delta * 1.5 and is_on_wall() # a tree or rock stops it
+	if (dive_left <= 0.0 and landed) or blocked or timer > 3.0:
+		velocity.x = 0; velocity.z = 0
+		_go(State.CHASE if alive else State.DISENGAGE)
+
+# Movement, gravity, climbing and animation after the decision.
+func _move(delta: float, ctx: Dictionary) -> void:
 	if climbing:
 		velocity = climb_dir * 0.6 + Vector3.UP * (MANTLE_SPEED if climb_top - global_position.y <= MANTLE_MAX else CLIMB_SPEED)
-	elif state == State.DIVE: velocity.y -= GRAVITY * delta
-	elif not is_on_floor(): velocity.y -= GRAVITY * delta
+	elif not is_on_floor() or state == State.DIVE: velocity.y -= GRAVITY * delta
 	else: velocity.y = 0.0
 	var want := Vector3(velocity.x, 0, velocity.z) # sliding along a wall eats this; climbing needs it
-	move_and_slide()
+	# Static support can be reused only while neither this body nor the world changed.
+	if not is_on_floor() or not velocity.is_zero_approx() or global_position != _ground_position or ctx.nav.revision != _ground_revision:
+		move_and_slide()
+		_ground_position = global_position
+		_ground_revision = ctx.nav.revision
 	if climbing:
 		if global_position.y >= climb_top + 0.02:
 			climbing = false # over the lip: step on
 			climbs += 1
 			global_position += climb_dir * 0.4
 			velocity = Vector3.ZERO
-	elif state != State.DIVE and is_on_wall() and want.length() > 0.1 and ctx.has("ray"):
+	elif can_climb and state != State.DIVE and is_on_wall() and want.length() > 0.1 and ctx.has("ray"):
 		_try_climb(ctx.ray, want)
 	rotation.y = atan2(-facing.x, -facing.z)
 	_animate()
@@ -538,12 +615,16 @@ func _strike(p: CharacterBody3D, ph: Node, now: float, los: Callable) -> void:
 	strikes += 1
 	var to := p.global_position - global_position
 	to.y = 0.0
-	if not in_reach(p, STRIKE_REACH): return # 3D: a player above (or below) its body is out of reach
+	if not in_reach(p, strike_reach): return # 3D: a player above (or below) its body is out of reach
 	if to.length() > 0.05 and rad_to_deg(facing.angle_to(to.normalized())) > STRIKE_ARC: return
 	if not los.call(eye(), p.eye_position()): return
 	_strike_serial += 1
-	var r: String = ph.apply(DamagePacket.new(_strike_serial, enemy_id, "infected", DAMAGE, "bite"), now)
-	if r == "applied" or r == "lethal": hits += 1
+	var r: String = ph.apply(DamagePacket.new(_strike_serial, enemy_id, "infected", damage, "bite"), now)
+	if r == "applied" or r == "lethal":
+		hits += 1
+		frenzy = mini(FRENZY_MAX, frenzy + 1) # +20% attack speed per hit landed, 5 stacks at most
+		frenzy_hit_at = now
+		if hit_fx.is_valid(): hit_fx.call(p.global_position + Vector3(0, 1.0, 0))
 
 # Follows the grid path toward goal; true once within ARRIVE (or unreachable).
 func _walk_to(goal: Vector3, speed: float, delta: float, nav: RefCounted) -> bool:
@@ -592,7 +673,7 @@ func _turn_toward(point: Vector3, delta: float) -> void:
 # Hurt by the player: give chase (unless dead or already fighting). A hit from
 # past the de-aggro radius still turns it around; it gives up at 24 m as usual.
 func alert_to(_pos: Vector3) -> void:
-	if state in [State.DEAD, State.CHASE, State.WINDUP, State.STRIKE, State.CHARGE, State.DIVE]: return
+	if state in [State.DEAD, State.CHASE, State.WINDUP, State.STRIKE, State.CHARGE, State.DIVE, State.STUN]: return
 	_go(State.CHASE)
 
 const WALK_CLIP_SPEED := 1.4
@@ -605,12 +686,12 @@ func _animate() -> void:
 	var want := "idle"
 	var scale := 1.0
 	if state == State.CHARGE:
-		want = "charge" # crouched wind-up before the pounce
+		want = "pounce_start" # NinjaJump_Start before the dash
 	elif state == State.DIVE:
 		want = "air"
 	elif state in [State.WINDUP, State.STRIKE]:
 		want = "strike"
-		scale = STRIKE_AT / WINDUP_S
+		scale = STRIKE_AT / maxf(windup_time(), 0.05)
 	elif climbing:
 		want = "climb"
 	elif speed > 0.1:

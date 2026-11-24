@@ -171,7 +171,7 @@ func _commit(at: float) -> void:
 		cooldown_until[action.id] = at + float(action.cooldown)
 	if action.has("immunity"):
 		var imm: Dictionary = action.immunity
-		health.grant_immunity(at + float(imm.to), imm.kinds, at + float(imm.from))
+		health.grant_immunity(at + float(imm.to), imm.kinds, at + float(imm.from), "action")
 	if action.has("instance"): action.instance.magazine -= 1 # one round per committed shot
 	if action.has("reload"): _transfer_rounds(action.reload)
 	committed.emit(action, action_id)

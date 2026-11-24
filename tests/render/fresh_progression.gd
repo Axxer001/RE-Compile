@@ -1,0 +1,23 @@
+extends "res://tests/render/run_render.gd"
+func run(c: Node3D) -> void:
+	c.session.meta.unlocked = c.PageLibrary.IDS.duplicate()
+	c.session.restart()
+	c.session.handle_action("pause")
+	c.pause_menu.buttons.new_game.pressed.emit()
+	c.pause_menu.buttons.new_game.pressed.emit()
+	c.park_enemies()
+	c.session.handle_action("grimoire")
+	await frame()
+	check(c.grimoire_panel.pages() == ["", "scorch_and_burn", "cultivate"], "fresh grimoire renders only two starter pages")
+	shot("fresh-grimoire.png")
+	c.session.handle_action("grimoire")
+	c.player.position = c.page_spots.firefly
+	await frame()
+	check(c.try_interact(true) == "page", "newly scattered Firefly can be picked up")
+	c.try_interact(false)
+	c.session.handle_action("grimoire")
+	c.grimoire_panel.select_page("firefly")
+	await frame()
+	check(c.session.grimoire.is_found("firefly") and not c.session.grimoire.is_unlocked("firefly"), "found Firefly remains locked until solved")
+	shot("collected-firefly-locked.png")
+	finish()

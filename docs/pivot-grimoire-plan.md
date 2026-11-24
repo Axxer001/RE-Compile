@@ -24,6 +24,13 @@ All teaching content is C++ (Python retired). Each page teaches one beginner C++
 | 6 | Dragon's Breath | Variables | `int`/`double`/`string`, `const`, `=` | 5: variables |
 | 7 | Firefly | User Input | `cin >>` into a declared variable | 6: user input |
 | 8 | Explosion | Data Types | `int`, `float`, `double`, `bool`, `char`, `string`, `auto` | 7: data types |
+| 9 | Flight of the Phoenix | Operators | `+ - * / %`, `++`/`--`, `+=` `-=` `*=` `/=` | 8: operators |
+| 10 | Call of the Phoenix | Strings | `string`, `+`/`+=` joining, `.length()`, `<string>` | 9: strings |
+| 11 | Rise of the Phoenix | Math | `<cmath>`, `max`, `min`, `sqrt`, `pow`, `round` | 10: math functions |
+| 12 | Heads or Tails | Booleans | `bool`, `true`/`false`, `==` `!=` `<` `>` `<=` `>=`, `boolalpha` | 11: booleans |
+| 13 | Where are my Coins? | If...Else | `if`, `else if`, `else`, `&&` `||` `!` | 12: if / else |
+| 14 | Let it Ride | Switch | `switch`, `case`, `break`, `default` | 13: switch |
+| 15 | All In | While Loop | `while (...) { }`, `do { } while (...);` | 14: while loops |
 
 The puzzle bank is `data/puzzles/code_assembly.json`, made by `tools/make_code_assembly_bank.py`, which compiles every variant with `g++ -std=c++17 -fsyntax-only -Wall -Werror`. Saved chant levels carry over unchanged.
 
@@ -46,7 +53,7 @@ About 55–60% of the current code carries over.
 | Settings and pause | `settings.gd`, `pause_menu.gd`, `settings_panel.gd`, `input_router.gd` (rebinds, wheel pulses) | Unchanged; only the action list changes (§3) |
 | Pickups | `pickup3d.gd`, `interactable3d.gd` | Page pickups on F |
 | Puzzle UI groundwork | `terminal3d.gd`, `terminal_panel.gd`, `hack_puzzles.gd` (Python snippets, multi-choice) | Base for the **Code Assembly** and **Spell Chant** UIs (§4.6) |
-| Arms rig | `arms_rig.gd` + WRAD ARMS | Casting hands: open palm / fist presets, IK targets for spell poses |
+| ~~Arms rig~~ Wand | ~~`arms_rig.gd` + WRAD ARMS~~ `scripts/player/wand_view.gd` (2026-11-19) | Wand-only first person: sway, bob, landing/climb dips, one cast kick and tip glow; spells leave from the tip |
 | Look and feel | `art_direction.gd` (night grade, fog, practical lights), `spring.gd`, `weapon_view.gd` springs | The Dark Forest mood fits the L4D2-style grade directly; springs drive hand sway and recoil |
 | Tooling | `verify.ps1`, all suites, mutation habit, encrypted export, content validator, licence ledger | Unchanged gate |
 | Arena builder | `greybox.gd` | Rebuild as a Dark Forest grey box (trees as pillars, clearings, page spots) |
@@ -144,7 +151,7 @@ Removed: reload (R), drop (G), throw, cycle throwable, flashlight, slot 4. The r
 
 ## 8. Decisions (2026-11-11, Sir: "Yes, recommended")
 - D1: keep the full Apex movement tech, gated behind flags; the GDD moves (dash, double jump) come on.
-- D2: WRAD arms for casting.
+- D2: WRAD arms for casting. **Superseded 2026-11-19 [Sir]: wand-only viewmodel, no body, arms or hands (`wand_view.gd`).**
 - D3: keep the L4D2-style night grade for the Dark Forest.
 - D4: guns retired to `reference/`.
 - D5: build in order P0 → P7.

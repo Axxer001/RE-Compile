@@ -26,6 +26,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	var s = c.session
 	var tree: SceneTree = c.get_tree()
 	s.meta.reset()
+	for id in ["dragons_breath", "firefly", "explosion"]: s.meta.unlock(id) # Explicit fixture grants, never production starters.
 	s.restart()
 	await tree.physics_frame
 	var pc: Node3D = c.pcombat
@@ -42,11 +43,11 @@ static func run(check: Callable, c: Node3D) -> void:
 	face_x.call()
 	await tree.physics_frame
 	var pages := ["dragons_breath", "firefly", "explosion"]
-	check.call(pages.all(func(id): return s.grimoire.is_unlocked(id) and Lib.make(id).kind == Lib.AbilityPage.Kind.SPELL and Lib.make(id).rank_req == "E"), "Dragon's Breath, Firefly and Explosion: Rank E spells, unlocked from the start (for testing)")
+	check.call(pages.all(func(id): return s.grimoire.is_unlocked(id) and Lib.make(id).kind == Lib.AbilityPage.Kind.SPELL and Lib.make(id).rank_req == "E"), "Dragon's Breath, Firefly and Explosion: Rank E spells, unlocked by the test fixture (for testing)")
 
 	# ---- Dragon's Breath ---------------------------------------------------------------------------
 	var br: Resource = s.grimoire.page("dragons_breath")
-	pc.equip("spell_1", br)
+	pc.equip("spell_4", br)
 	var inside := put(c, ids[0], home + Vector3(10, 0, 0))   # in the cone
 	var wide := put(c, ids[1], home + Vector3(10, 0, 4.5))   # 10 m out, 4.5 m to the side: outside (1.25 m + body)
 	var behind := put(c, ids[2], home + Vector3(-6, 0, 0))   # behind the mouth
@@ -54,20 +55,21 @@ static func run(check: Callable, c: Node3D) -> void:
 	await tree.physics_frame
 	var pow: float = pc._pow(s.run.time)
 	var mp0: float = pc.mp
-	var r: String = pc.use_slot("spell_1", Vector2.ZERO, s.run.time)
+	var r: String = pc.use_slot("spell_4", Vector2.ZERO, s.run.time)
 	var busy_in: String = c.spells.busy()
-	var blocked: String = pc.use_slot("skill_1", Vector2.ZERO, s.run.time)
+	var blocked: String = pc.use_slot("spell_2", Vector2.ZERO, s.run.time)
 	var no_lmb: bool = not pc.can_cast()
 	var moving: bool = not c.spells.frozen()
 	steps(c, 0.25)
 	var bar: Dictionary = c.channel_view(s.run.time)
+	var channel_clip: bool = pc.wand.channeling and pc.wand.played.has(&"Channel") # the Ember Wand's Channel holds the tip lit
 	steps(c, 10.0)
 	var in_h := hits(c, "dragons_breath", inside.enemy_id)
 	var per: float = in_h[0].amount if not in_h.is_empty() else 0.0
-	check.call(r == "ok" and is_equal_approx(pc.mp, mp0 - 50.0) and busy_in == "breath" and blocked == "busy" and no_lmb and moving and bar.get("label", "") == "Dragon's Breath", "Dragon's Breath: 50 MP; while breathing no other attack, skill or spell, but the player moves; the HUD shows its bar")
+	check.call(r == "ok" and is_equal_approx(pc.mp, mp0 - 50.0) and busy_in == "breath" and blocked == "busy" and no_lmb and moving and bar.get("label", "") == "Dragon's Breath" and channel_clip, "Dragon's Breath: 50 MP (the wand's Channel clip held); while breathing no other attack, skill or spell, but the player moves; the HUD shows its bar")
 	check.call(in_h.size() == 20 and is_equal_approx(per, pow * 0.02) and c.effects.has(inside.enemy_id, "Burn", s.run.time), "the cone hits every 0.5 s for 10 s: 20 ticks of %.2f (2%% of Magic Pow) and Burn" % per)
 	check.call(hits(c, "dragons_breath", wide.enemy_id).is_empty() and hits(c, "dragons_breath", behind.enemy_id).is_empty() and hits(c, "dragons_breath", far.enemy_id).is_empty(), "outside the cone (to the side, behind, past 20 m) nothing is hit")
-	var cd_br: float = pc.remaining("spell_1", s.run.time)
+	var cd_br: float = pc.remaining("spell_4", s.run.time)
 	check.call(c.spells.busy() == "" and pc.can_cast() and cd_br > 0.0 and cd_br <= 20.0 * (1.0 - s.stats.value("spell_mastery", s.run.time)) - 10.0 + 0.2, "after 10 s the hands are free; the 20 s cooldown (x Spell Mastery) is running (%.1f s left)" % cd_br)
 	# The cone itself: a wall between the mouth and an enemy blocks it.
 	var mouth: Vector3 = c.spells.breath_mouth()
@@ -160,7 +162,7 @@ static func run(check: Callable, c: Node3D) -> void:
 	steps(c, 2.0)
 	s.input.key_source = saved
 	var held: bool = p.global_position.distance_to(home + Vector3(0, 4, 0)) < 0.01 and is_equal_approx(p.yaw, yaw0)
-	var all_locked: bool = pc.use_slot("spell_1", Vector2.ZERO, s.run.time) == "busy" and not pc.can_cast()
+	var all_locked: bool = pc.use_slot("spell_4", Vector2.ZERO, s.run.time) == "busy" and not pc.can_cast()
 	var frac: float = c.spells.charge_fraction(s.run.time)
 	check.call(r3 == "ok" and pc.mp == 0.0 and c.spells.frozen() and held and all_locked and frac > 0.09 and frac < 0.11 and c.channel_view(s.run.time).label.begins_with("Explosion"), "Explosion spends all MP; charging, the player cannot move, look or act, held 4 m up in the air (charge %d%%)" % roundi(frac * 100.0))
 	# A hit breaks it: MP stays spent, the full cooldown starts.

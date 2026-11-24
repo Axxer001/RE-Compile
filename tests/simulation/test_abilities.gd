@@ -28,6 +28,17 @@ static func flat(v: Vector3) -> Vector2:
 static func tap(c: Node3D, keys: Dictionary, k: int) -> void:
 	keys[k] = true; c.session.step(DT); keys.erase(k); c.session.step(DT)
 
+# The held grimoire [2026-11-20]: key 1+i turns to page i (0.5 s), then LMB casts it.
+static func open_page(c: Node3D, keys: Dictionary, i: int) -> void:
+	if c.pcombat.active == i and not c.pcombat.turning(c.session.run.time): return
+	tap(c, keys, KEY_1 + i)
+	while c.pcombat.turning(c.session.run.time): c.session.step(DT)
+	c.session.step(DT)
+
+static func cast(c: Node3D, keys: Dictionary, i: int) -> void:
+	open_page(c, keys, i)
+	tap(c, keys, MOUSE_BUTTON_LEFT)
+
 static func run(check: Callable, c: Node3D) -> void:
 	var s = c.session
 	var tree: SceneTree = c.get_tree()
@@ -47,47 +58,47 @@ static func run(check: Callable, c: Node3D) -> void:
 	var lo: Dictionary = pc.loadout
 
 	# ---- loadout ----------------------------------------------------------------------
-	check.call(String(lo.attack.id) == "scorch_and_burn" and String(lo.skill_1.id) == "cultivate" and lo.skill_2 == null and lo.spell_1 == null and lo.passive == null, "start loadout: Scorch and Burn, Cultivate on E; the rest empty")
-	check.call(pc.equip("skill_2", PageLibrary.make("quick_step")) == "locked", "a page not yet unlocked cannot be equipped")
+	check.call(String(lo.spell_1.id) == "scorch_and_burn" and String(lo.spell_2.id) == "cultivate" and lo.spell_3 == null and lo.spell_4 == null and lo.passive == null, "start loadout: Scorch and Burn on page 1, Cultivate on page 2; the rest empty")
+	check.call(pc.equip("spell_3", PageLibrary.make("quick_step")) == "locked", "a page not yet unlocked cannot be equipped")
 	for id in ["quick_step", "ring_of_fire", "sage_arts"]: s.meta.unlock(id) # as if solved (P5 unlocks are tested in test_grimoire)
 	var ring: Resource = PageLibrary.make("ring_of_fire")
 	var sage: Resource = PageLibrary.make("sage_arts")
 	check.call(ring.mp_cost == 30.0 and ring.cooldown_s == 15.0 and ring.rank_req == "D" and ring.damage_pct == 0.15 and ring.duration_s == 10.0 and ring.mastery_applies and sage.rank_req == "D", "pages: Ring of Fire 30 MP, 15 s x Mastery, rank D, 15% Pow, 10 s; Sage Arts rank D [GDD]")
-	check.call(pc.equip("spell_1", ring) == "rank" and pc.equip("passive", sage) == "rank" and lo.spell_1 == null, "rank E: Ring of Fire and Sage Arts cannot be equipped")
-	check.call(pc.equip("spell_1", PageLibrary.make("cultivate")) == "wrong_kind" and pc.equip("skill_2", PageLibrary.make("quick_step")) == "ok" and pc.equip("skill_1", PageLibrary.make("quick_step")) == "duplicate" and pc.equip("slot_9", ring) == "unknown_slot", "equip refuses a wrong slot kind, the same page twice, an unknown slot")
+	check.call(pc.equip("spell_4", ring) == "rank" and pc.equip("passive", sage) == "rank" and lo.spell_4 == null, "rank E: Ring of Fire and Sage Arts cannot be equipped")
+	check.call(pc.equip("passive", PageLibrary.make("cultivate")) == "wrong_kind" and pc.equip("spell_3", PageLibrary.make("quick_step")) == "ok" and pc.equip("spell_2", PageLibrary.make("quick_step")) == "duplicate" and pc.equip("slot_9", ring) == "unknown_slot", "equip refuses a wrong slot kind, the same page twice, an unknown slot")
 	pc._default_loadout() # whatever a broken rule let through above, the rest starts from the start loadout
 	lo = pc.loadout
-	check.call(pc.equip("skill_2", s.grimoire.page("quick_step")) == "ok", "an unlocked Quick Step equips on Q")
+	check.call(pc.equip("spell_3", s.grimoire.page("quick_step")) == "ok", "an unlocked Quick Step equips on page 3")
 
 	# ---- Cultivate -----------------------------------------------------------------------
 	place(c, Vector3(60, 0, 57), 0.0)
 	await tree.physics_frame
 	steps(c, 2)
-	tap(c, keys, KEY_E)
+	cast(c, keys, 1)
 	var t0: float = s.run.time
 	var st: RefCounted = s.stats
-	check.call(is_equal_approx(st.value("magic_pow", t0), 110.0) and is_equal_approx(st.value("spell_mastery", t0), 0.20) and is_equal_approx(st.value("atk_spd", t0), 5.75) and absf(st.attack_interval(t0) - 1.0 / 5.75) < 1e-6, "E: Cultivate gives Pow 110, Mastery 20%%, Atk Spd 5.75 (basic every %.4f s)" % st.attack_interval(t0))
-	check.call(absf(pc.remaining("skill_1", s.run.time) - 20.0) < 0.05 and pc.aura != null, "Cultivate's cooldown is 20 s")
+	check.call(is_equal_approx(st.value("magic_pow", t0), 1100.0) and is_equal_approx(st.value("spell_mastery", t0), 0.20) and is_equal_approx(st.value("atk_spd", t0), 5.75) and absf(st.attack_interval(t0) - 1.0 / 5.75) < 1e-6, "page 2 + LMB: Cultivate gives Pow 1100, Mastery 20%%, Atk Spd 5.75 (basic every %.4f s)" % st.attack_interval(t0))
+	check.call(absf(pc.remaining("spell_2", s.run.time) - 20.0) < 0.05 and pc.aura != null, "Cultivate's cooldown is 20 s")
 	pc.publish()
 	var glowing: bool = pc.aura.visible
 	while s.run.time - t0 < 9.95: s.step(DT)
-	var still_on: bool = is_equal_approx(st.value("magic_pow", s.run.time), 110.0)
+	var still_on: bool = is_equal_approx(st.value("magic_pow", s.run.time), 1100.0)
 	steps(c, 6)
 	pc.publish()
-	check.call(glowing and still_on and is_equal_approx(st.value("magic_pow", s.run.time), 100.0) and is_equal_approx(st.value("atk_spd", s.run.time), 5.0) and is_equal_approx(st.value("spell_mastery", s.run.time), 0.0) and not pc.aura.visible, "the buff (and its hand glow) lasts 10 s and ends exactly")
-	tap(c, keys, KEY_E)
-	check.call(pc.casts.get("cultivate", 0) == 1, "E on cooldown does nothing")
+	check.call(glowing and still_on and is_equal_approx(st.value("magic_pow", s.run.time), 1000.0) and is_equal_approx(st.value("atk_spd", s.run.time), 5.0) and is_equal_approx(st.value("spell_mastery", s.run.time), 0.0) and not pc.aura.visible, "the buff (and its hand glow) lasts 10 s and ends exactly")
+	cast(c, keys, 1)
+	check.call(pc.casts.get("cultivate", 0) == 1, "Cultivate on cooldown does nothing")
 	# Skills ignore Spell Mastery: at 30% Mastery the cooldown is still 20 s.
-	pc.ready_at.erase("skill_1")
+	pc.ready_at.erase("spell_2")
 	st.add_modifier("test_mastery", "spell_mastery", 1.0, 0.30, s.run.time + 60.0)
-	tap(c, keys, KEY_E)
-	check.call(absf(pc.remaining("skill_1", s.run.time) - 20.0) < 0.05, "a skill's cooldown ignores Spell Mastery (%.2f s at 50%%)" % pc.remaining("skill_1", s.run.time))
+	cast(c, keys, 1)
+	check.call(absf(pc.remaining("spell_2", s.run.time) - 20.0) < 0.05, "a skill's cooldown ignores Spell Mastery (%.2f s at 50%%)" % pc.remaining("spell_2", s.run.time))
 	# Re-casting refreshes the buff by id (no stacking).
-	pc.ready_at.erase("skill_1")
-	tap(c, keys, KEY_E)
+	pc.ready_at.erase("spell_2")
+	cast(c, keys, 1)
 	var n_cult := 0
 	for m in st.modifiers: if m.id == "cultivate": n_cult += 1
-	check.call(n_cult == 3 and is_equal_approx(st.value("magic_pow", s.run.time), 110.0), "re-cast Cultivate refreshes its 3 modifiers, no stacking (Pow %.0f)" % st.value("magic_pow", s.run.time))
+	check.call(n_cult == 3 and is_equal_approx(st.value("magic_pow", s.run.time), 1100.0), "re-cast Cultivate refreshes its 3 modifiers, no stacking (Pow %.0f)" % st.value("magic_pow", s.run.time))
 	st.modifiers.clear()
 	pc.ready_at.clear()
 
@@ -96,10 +107,11 @@ static func run(check: Callable, c: Node3D) -> void:
 		place(c, Vector3(60, 0, 57), 0.0)
 		await tree.physics_frame
 		steps(c, 2)
-		pc.ready_at.erase("skill_2")
+		open_page(c, keys, 2)
+		pc.ready_at.erase("spell_3")
 		var a: Vector3 = p.global_position
 		for k in case[1]: keys[k] = true
-		keys[KEY_Q] = true; s.step(DT); keys.erase(KEY_Q)
+		keys[MOUSE_BUTTON_LEFT] = true; s.step(DT); keys.erase(MOUSE_BUTTON_LEFT)
 		for k in case[1]: keys.erase(k)
 		var d := flat(p.global_position - a)
 		# The held keys also walk a tick or so: allow a few cm.
@@ -107,13 +119,13 @@ static func run(check: Callable, c: Node3D) -> void:
 		check.call(absf(d.length() - 5.0) < 0.25 and absf(wrapf(head - float(case[2]), -180.0, 180.0)) < 2.0, "Quick Step (%s): %.2f m at %.0f deg (expected 5 m at %.0f)" % [case[0], d.length(), head, case[2]])
 	steps(c, 2)
 	var q0: int = pc.casts.get("quick_step", 0)
-	tap(c, keys, KEY_Q)
-	check.call(pc.casts.get("quick_step", 0) == q0 and absf(pc.remaining("skill_2", s.run.time) - (10.0 - 3.0 * DT)) < 0.05, "Quick Step's cooldown is 10 s (a press inside it does nothing)")
+	cast(c, keys, 2)
+	check.call(pc.casts.get("quick_step", 0) == q0 and absf(pc.remaining("spell_3", s.run.time) - (10.0 - 3.0 * DT)) < 0.05, "Quick Step's cooldown is 10 s (a press inside it does nothing)")
 	# A wall 2 m ahead: it stops short, never inside the wall.
 	place(c, Vector3(110, 0, 2.6), 0.0) # the north wall's face is about 2 m away
 	await tree.physics_frame
 	steps(c, 2)
-	pc.ready_at.erase("skill_2")
+	pc.ready_at.erase("spell_3")
 	var b: Vector3 = p.global_position
 	var moved: float = pc.quick_step(Vector2.ZERO)
 	await tree.physics_frame
@@ -123,16 +135,16 @@ static func run(check: Callable, c: Node3D) -> void:
 
 	# ---- Ring of Fire (rank D) ---------------------------------------------------------
 	s.progression.rank = "D"
-	check.call(pc.equip("spell_1", ring) == "ok" and pc.equip("passive", sage) == "ok", "rank D: Ring of Fire and Sage Arts equip")
+	check.call(pc.equip("spell_4", ring) == "ok" and pc.equip("passive", sage) == "ok", "rank D: Ring of Fire and Sage Arts equip")
 	pc.equip("passive", null) # Sage Arts would refill MP during the spell checks
 	place(c, Vector3(60, 0, 57), 0.0)
 	await tree.physics_frame
 	steps(c, 2)
 	pc.mp = 29.0
-	tap(c, keys, KEY_1)
-	check.call(c.projectiles.rings.is_empty() and is_equal_approx(pc.mp, 29.0) and pc.remaining("spell_1", s.run.time) == 0.0, "at 29 MP the spell does not cast (no MP spent, no cooldown)")
+	cast(c, keys, 3)
+	check.call(c.projectiles.rings.is_empty() and is_equal_approx(pc.mp, 29.0) and pc.remaining("spell_4", s.run.time) == 0.0, "at 29 MP the spell does not cast (no MP spent, no cooldown)")
 	pc.mp = 100.0
-	tap(c, keys, KEY_1)
+	cast(c, keys, 3)
 	var rg: Dictionary = c.projectiles.rings[0] if not c.projectiles.rings.is_empty() else {}
 	var pos: Array = c.projectiles.orb_positions(rg, s.run.time) if not rg.is_empty() else []
 	var even := pos.size() == 6
@@ -153,17 +165,17 @@ static func run(check: Callable, c: Node3D) -> void:
 	var c2: Vector3 = p.global_position
 	var q: Array = c.projectiles.orb_positions(rg, s.run.time)
 	check.call(flat(c2 - centre).length() > 2.0 and absf(flat((q[0] as Vector3) - c2).length() - 3.0) < 0.01, "the ring moves with the player")
-	check.call(absf(pc.remaining("spell_1", s.run.time) - (15.0 - 31.0 * DT)) < 0.05, "Ring of Fire's cooldown is 15 s at 0%% Mastery (%.2f left)" % pc.remaining("spell_1", s.run.time))
+	check.call(absf(pc.remaining("spell_4", s.run.time) - (15.0 - 31.0 * DT)) < 0.05, "Ring of Fire's cooldown is 15 s at 0%% Mastery (%.2f left)" % pc.remaining("spell_4", s.run.time))
 	# An enemy on the ring's path is hit as the orbs sweep by, 15% of Pow per hit.
 	foe.reset_to(p.global_position + Vector3(3.0, 0, 0), 0.0); foe.inert = true
-	foe.health.max_hp = 1000.0 # tough enough to outlast 2 s of the ring
+	foe.health.max_hp = 100000.0 # tough enough to outlast 2 s of the ring
 	foe.health.reset()
 	await tree.physics_frame
 	var fhp: float = foe.health.hp
 	var h0: int = rg.hits.size()
 	steps(c, 120) # 2 s
 	var ring_hits: int = rg.hits.size() - h0
-	check.call(ring_hits >= 11 and ring_hits <= 15 and is_equal_approx(fhp - foe.health.hp, 15.0 * ring_hits), "an enemy on the ring: %d hits of 15 in 2 s (6 orbs, about 1.06 turns/s)" % ring_hits)
+	check.call(ring_hits >= 11 and ring_hits <= 15 and is_equal_approx(fhp - foe.health.hp, 150.0 * ring_hits), "an enemy on the ring: %d hits of 150 in 2 s (6 orbs, about 1.06 turns/s)" % ring_hits)
 	# Scorched Slow [R12]: a ring hit slows the enemy's movement by 90% for 2 s; re-hits refresh it, never stack.
 	var slow_id: String = Projectiles.SCORCHED_SLOW.id
 	var slowed: bool = c.effects.has(foe.enemy_id, slow_id, s.run.time) and is_equal_approx(foe.speed_mult, 0.1)
@@ -175,11 +187,11 @@ static func run(check: Callable, c: Node3D) -> void:
 	while not c.projectiles.rings.is_empty() and s.run.time < 30.0 + rg.start: s.step(DT)
 	check.call(c.projectiles.rings.is_empty() and absf(s.run.time - rg.until) < 2.0 * DT, "the ring lasts 10 s")
 	# Spell Mastery shortens a spell's cooldown: 20% -> 12 s.
-	pc.ready_at.erase("spell_1")
+	pc.ready_at.erase("spell_4")
 	pc.mp = 100.0
 	st.add_modifier("test_mastery", "spell_mastery", 1.0, 0.20, s.run.time + 60.0)
-	tap(c, keys, KEY_1)
-	check.call(absf(pc.remaining("spell_1", s.run.time) + DT - 12.0) < 0.05, "at 20%% Mastery the spell's cooldown is 12 s")
+	cast(c, keys, 3)
+	check.call(absf(pc.remaining("spell_4", s.run.time) + DT - 12.0) < 0.05, "at 20%% Mastery the spell's cooldown is 12 s")
 	st.modifiers.clear()
 	c.projectiles.reset()
 	# Re-hit rule at service level: a target touching all six orbs for 2 s takes
@@ -200,10 +212,10 @@ static func run(check: Callable, c: Node3D) -> void:
 	place(c, Vector3(60, 0, 57), 0.0)
 	await tree.physics_frame
 	c.director.reset()
-	p.health.hp = 50.0
+	p.health.hp = 500.0
 	pc.mp = 40.0
 	steps(c, 60)
-	check.call(absf(p.health.hp - 53.0) < 0.1 and absf(pc.mp - 45.0) < 0.1, "Sage Arts out of combat: +3%% max HP and +5%% max MP per second (HP %.1f, MP %.1f) [S4]" % [p.health.hp, pc.mp])
+	check.call(absf(p.health.hp - 530.0) < 0.1 and absf(pc.mp - 45.0) < 0.1, "Sage Arts out of combat: +3%% max HP and +5%% max MP per second (HP %.1f, MP %.1f) [S4]" % [p.health.hp, pc.mp])
 	foe.reset_to(Vector3(60, 0, 50), 0.0); foe.inert = true
 	foe.aggroed = true # an enemy has aggroed
 	s.step(DT) # the tracker sees it at the end of the tick
@@ -216,10 +228,10 @@ static func run(check: Callable, c: Node3D) -> void:
 	var flat_in_grace: bool = is_equal_approx(p.health.hp, hp_c)
 	steps(c, 60)
 	check.call(flat_in_combat and flat_in_grace and p.health.hp > hp_c + 2.0, "no regen in combat or the 3 s grace [R12], then it resumes")
-	p.health.hp = 99.5
+	p.health.hp = 999.5
 	pc.mp = 99.0
 	steps(c, 60)
-	check.call(is_equal_approx(p.health.hp, 100.0) and is_equal_approx(pc.mp, 100.0), "regen stops at the max")
+	check.call(is_equal_approx(p.health.hp, 1000.0) and is_equal_approx(pc.mp, 100.0), "regen stops at the max")
 	pc.equip("passive", null)
 	p.health.hp = 50.0
 	steps(c, 30)
@@ -228,17 +240,17 @@ static func run(check: Callable, c: Node3D) -> void:
 	# ---- Max HP stat, action bar, restart -------------------------------------------------
 	st.add_modifier("test_hp", "max_hp", 1.0, 50.0, s.run.time + 60.0)
 	s.step(DT)
-	check.call(is_equal_approx(p.health.max_hp, 150.0), "the Max HP stat sizes the player's HP pool (%.0f)" % p.health.max_hp)
+	check.call(is_equal_approx(p.health.max_hp, 1050.0), "the Max HP stat sizes the player's HP pool (%.0f)" % p.health.max_hp)
 	st.modifiers.clear()
 	s.step(DT)
-	check.call(is_equal_approx(p.health.max_hp, 100.0) and p.health.hp <= 100.0, "and shrinks back (HP clamped)")
+	check.call(is_equal_approx(p.health.max_hp, 1000.0) and p.health.hp <= 1000.0, "and shrinks back (HP clamped)")
 	var bar: String = pc.action_bar_text(s.run.time)
-	check.call(bar.begins_with("[E] Cultivate") and bar.find("[Q] Quick Step") > 0 and bar.find("[1] Ring of Fire") > 0 and bar.find("[P] -") > 0, "action bar: E, Q, 1-3, P in order (%s)" % bar)
+	check.call(bar.begins_with("[1] Scorch and Burn") and bar.find("[2] Cultivate") > 0 and bar.find("[3] Quick Step") > 0 and bar.find("[4] Ring of Fire") > 0 and bar.find("[P] -") > 0, "the loadout as text: pages 1-4, then P (%s)" % bar)
 	s.progression.rank = "E"
-	check.call(pc.use_slot("spell_1", Vector2.ZERO, s.run.time + 100.0) == "rank", "a rank-locked page cannot be used below its rank")
+	check.call(pc.use_slot("spell_4", Vector2.ZERO, s.run.time + 100.0) == "rank", "a rank-locked page cannot be used below its rank")
 	s.restart()
 	await tree.physics_frame
-	check.call(pc.loadout.spell_1 == null and String(pc.loadout.skill_1.id) == "cultivate" and pc.ready_at.is_empty() and c.projectiles.rings.is_empty() and s.stats.modifiers.is_empty(), "restart: start loadout, no cooldowns, no ring, no buffs")
+	check.call(pc.loadout.spell_4 == null and String(pc.loadout.spell_2.id) == "cultivate" and pc.ready_at.is_empty() and c.projectiles.rings.is_empty() and s.stats.modifiers.is_empty(), "restart: start loadout, no cooldowns, no ring, no buffs")
 
 	s.input.key_source = saved_k
 	s.input.mouse_source = saved_m

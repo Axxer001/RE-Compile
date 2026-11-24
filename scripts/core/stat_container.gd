@@ -5,12 +5,13 @@ extends RefCounted
 signal changed
 
 const STATS := ["max_hp", "max_mp", "magic_pow", "mov_spd", "atk_spd", "spell_mastery"]
-const BASE := {"max_hp": 100.0, "max_mp": 100.0, "magic_pow": 100.0, "mov_spd": 10.0, "atk_spd": 5.0, "spell_mastery": 0.0}
-# Max HP / MP / Pow: flat +5 per point or chant [Sir R3, "Flat 5"; was 15 / 10 / 5]; the rest per Tech Spec §1.1.
-const PER_POINT := {"max_hp": 5.0, "max_mp": 5.0, "magic_pow": 5.0, "mov_spd": 0.25, "atk_spd": 0.20, "spell_mastery": 0.015}
+# Player rescale [Sir, 2026-11-15; docs/plan-dark-forest-roster.md §1]: HP and Pow x10 (100 -> 1000), MP unchanged.
+const BASE := {"max_hp": 1000.0, "max_mp": 100.0, "magic_pow": 1000.0, "mov_spd": 10.0, "atk_spd": 5.0, "spell_mastery": 0.0}
+# Max HP / Pow: +50 per point or chant (x10 with the rescale); Max MP +5 [Sir R3]; the rest per Tech Spec §1.1.
+const PER_POINT := {"max_hp": 50.0, "max_mp": 5.0, "magic_pow": 50.0, "mov_spd": 0.25, "atk_spd": 0.20, "spell_mastery": 0.015}
 # A successful Spell Chant adds CHANT_GAIN x TIER_MULT[the chant's tier], separate
 # from stat points [Sir R10, replaces the R9 table]; clamped at the hard caps.
-const CHANT_GAIN := {"max_hp": 5.0, "max_mp": 5.0, "magic_pow": 5.0, "mov_spd": 0.4, "atk_spd": 0.25, "spell_mastery": 0.015}
+const CHANT_GAIN := {"max_hp": 50.0, "max_mp": 5.0, "magic_pow": 50.0, "mov_spd": 0.4, "atk_spd": 0.25, "spell_mastery": 0.015}
 const TIER_MULT := {1: 1.0, 2: 1.15, 3: 1.3, 4: 1.5}
 const HARD_CAP := {"mov_spd": 22.0, "atk_spd": 12.0, "spell_mastery": 0.65}
 const MASTERY_SOFT := 0.45     # past this, each point gives half (S3)
@@ -21,6 +22,12 @@ var chant_points := {}   # stat -> successful chants (refunded as 1 point each o
 var chant_gain := {}     # stat -> total flat gain from those chants (tier-dependent [R10])
 var unspent := 0
 var modifiers: Array = []  # {id, stat, mul, flat, until}
+# Gambling Addiction [Sir, 2026-11-14]: while set, no buff of any source lands:
+# a modifier that raises a stat is refused (BUFF_BLOCK_EXEMPT excepted). Chants
+# cannot happen at all then: the Grimoire stays shut [Sir, 2026-11-15].
+var buff_block := false
+const BUFF_BLOCK_EXEMPT := ["addiction"]
+var buffs_refused := 0
 
 func _init() -> void:
 	for s in STATS:
@@ -57,11 +64,13 @@ func value(stat: String, now := 0.0) -> float:
 	var v := base_value(stat)
 	var mul := 1.0
 	var flat := 0.0
+	var post := 1.0
 	for m in modifiers:
 		if m.stat == stat and now < m.until:
 			mul *= m.mul
 			flat += m.flat
-	return minf(v * mul + flat, HARD_CAP.get(stat, INF))
+			post *= float(m.get("post", 1.0))
+	return minf((v * mul + flat) * post, HARD_CAP.get(stat, INF)) # post: applied last (Gambling Addiction's Pow x0.1)
 
 func allocate(stat: String) -> bool:
 	if unspent <= 0 or not stat in STATS: return false
@@ -100,10 +109,14 @@ func allocated(stat: String) -> int:
 	return int(points[stat])
 
 # Timed modifier set; re-adding the same id refreshes it (no stacking).
-func add_modifier(id: String, stat: String, mul: float, flat: float, until: float) -> void:
+func add_modifier(id: String, stat: String, mul: float, flat: float, until: float, post := 1.0) -> bool:
+	if buff_block and not id in BUFF_BLOCK_EXEMPT and (mul > 1.0 or flat > 0.0 or post > 1.0):
+		buffs_refused += 1
+		return false
 	modifiers = modifiers.filter(func(m): return not (m.id == id and m.stat == stat))
-	modifiers.append({"id": id, "stat": stat, "mul": mul, "flat": flat, "until": until})
+	modifiers.append({"id": id, "stat": stat, "mul": mul, "flat": flat, "until": until, "post": post})
 	changed.emit()
+	return true
 
 func expire(now: float) -> void:
 	var before := modifiers.size()
@@ -121,3 +134,9 @@ func attack_interval(now := 0.0) -> float:
 
 func snapshot() -> Dictionary:
 	return {"points": points.duplicate(), "unspent": unspent}
+
+# Ends every modifier from these sources now (Let it Ride's low roll strips buffs).
+func remove_sources(ids: Array) -> void:
+	var before := modifiers.size()
+	modifiers = modifiers.filter(func(m): return not (m.id in ids))
+	if modifiers.size() != before: changed.emit()

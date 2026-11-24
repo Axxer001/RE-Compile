@@ -10,6 +10,7 @@ const SUITE := "performance"
 const WARM_S := 3.0
 const SAMPLE_S := 20.0
 const P95_BUDGET_MS := 7.7 # [Sir, 2026-11-13] real-clock frame times (was 6.9 on the smoothed delta)
+const BURNING_MIN := 8      # of Map 1's 11 (the old load asked 10 of 20)
 var checks := 0
 var failures: Array[String] = []
 var out_dir := "res://"
@@ -17,8 +18,10 @@ var fixture := ""
 var main: Node3D
 var t := 0.0
 var frames: Array[float] = []
-const Forest = preload("res://scripts/world/dark_forest.gd")
-const ROUTE := [0, 1, 2, 5, 4, 6, 3, 1, 0] # clearings, each hop along a path
+const Forest = preload("res://scripts/world/dark_forest.gd") # baseline.gd (extends this) still benchmarks the old generator
+# Map 1 [2026-11-20; spec §6]: one combat chunk loaded, the camera looping
+# through it and over its edges (the wrap moves the tiles round it).
+const ROUTE := [Vector3(0, 0, 0), Vector3(40, 0, 0), Vector3(40, 0, -40), Vector3(-10, 0, -40), Vector3(-10, 0, 25), Vector3(0, 0, 0)]
 var PATH: Array = []
 var max_lit := 0
 var max_shots := 0
@@ -51,19 +54,29 @@ func _ready() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	main = create_world()
 	main.external_driver = true
-	main.fixed_map_seed = Forest.densest_seed() # the perf suite runs on a dense map [R11]
+	main.fixed_map_seed = 7
 	add_child(main)
-	for ci in ROUTE: PATH.append(Vector3(Forest.CLEARINGS[ci][0], 0, Forest.CLEARINGS[ci][1]))
+	main.map1.skip_to_field()
+	main._rebuild_navs()
+	var centre: Vector3 = main.map1.chunk.centre
+	for off in ROUTE: PATH.append(centre + off)
 	main.spawning = false
-	# R6 cap: all 20 Blighted Sprites in play round the camp, all chasing; too
-	# tough to die, so the load holds for the whole sample.
+	# Map 1's worst case [spec §2, §4]: a pathway's horde of 6 followed the player
+	# into a fight at its cap of 5 alive: 11 chasing, of every kind, too tough to
+	# die, so the load holds for the whole sample. (The old forest's 20-Sprite
+	# load measured 4.5 ms of the frame on its own: Map 1 never has 20 alive.)
 	var i := 0
+	var want := {"sprite": 5, "ghoul": 4, "mortus": 2}
 	for id in main.enemies:
 		var e: CharacterBody3D = main.enemies[id]
-		e.reset_to(Vector3(66.0 + (i % 5) * 4.0, 0, 112.0 + (i / 5) * 3.0), 180.0)
+		if int(want.get(e.kind, 0)) <= 0:
+			main._to_reserve(e)
+			continue
+		e.reset_to(PATH[0] + Vector3(-8.0 + (i % 5) * 4.0, 0, -12.0 - (i / 5) * 3.0), 180.0)
 		e.health.max_hp = 1.0e9
 		e.health.reset()
 		e._go(e.State.CHASE)
+		want[e.kind] = int(want[e.kind]) - 1
 		i += 1
 	# A Ring of Fire on the player for the whole run.
 	var pl: CharacterBody3D = main.player
@@ -86,6 +99,7 @@ func _process(delta: float) -> void:
 	var b: Vector3 = PATH[i + 1]
 	var pos := a.lerp(b, seg_t - i)
 	var dir := (b - a).normalized()
+	pos.y = main.map1.height_at(Vector2(pos.x, pos.z))
 	main.player.global_position = pos
 	main.player.yaw = atan2(-dir.x, -dir.z)
 	main.player.apply_look()
@@ -107,16 +121,16 @@ func _process(delta: float) -> void:
 		sample_seconds += real_ms / 1000.0
 		min_shots = mini(min_shots, main.projectiles.shots.size())
 		min_burning = mini(min_burning, _burning())
-		if main.projectiles.shots.size() == main.projectiles.POOL and _burning() >= 10:
+		if main.projectiles.shots.size() == main.projectiles.POOL and _burning() >= BURNING_MIN:
 			full_load_frames += 1
 	if t > WARM_S + SAMPLE_S:
 		set_process(false)
 		report()
 
-# Fireballs from the player's hands at the Sprites (1 damage, Burn on hit)
+# Fireballs from the wand tip at the Sprites (1 damage, Burn on hit)
 # until the pool holds 64 in flight.
 func _keep_pool_full() -> void:
-	var ids: Array = main.enemies.keys()
+	var ids: Array = main.enemies.keys().filter(func(id): return not main.enemies[id].reserve and main.enemies[id].visible)
 	var origin: Vector3 = main.player.eye_position()
 	var k := 0
 	while main.projectiles.shots.size() < main.projectiles.POOL:
@@ -157,14 +171,14 @@ func report() -> void:
 		"max_burning": max_burning,
 		"rings": main.projectiles.rings.size(),
 		"map_seed": main.map_seed,
-		"trees": main.map.trees.size(),
+		"trees": main.map1.chunk.layout.trees.size() * 9, # the 3 x 3 wrapped tiles
 		"actors_ms": snappedf(actors_us / 1000.0 / maxf(1, n), 0.001),
 		"effects_ms": snappedf(effects_us / 1000.0 / maxf(1, n), 0.001),
 	}
 	check(n > 300, "sampled enough frames (%d)" % n)
-	check(main.enemies.size() == 20 and main.alive_count() == 20, "20 Blighted Sprites active (the R6 cap)")
-	check(max_shots == main.projectiles.POOL and main.projectiles.rings.size() == 1 and max_burning >= 10, "the load: %d fireballs in flight (the pool), a Ring of Fire, up to %d Sprites burning" % [max_shots, max_burning])
-	check(metrics.p95_ms <= P95_BUDGET_MS, "Dark Forest + 20 Sprites + 64 fireballs + ring + burns: p95 %.2f ms <= %.1f ms" % [metrics.p95_ms, P95_BUDGET_MS])
+	check(main.alive_count() == 11, "Map 1's worst case active: 11 enemies chasing (%d)" % main.alive_count())
+	check(max_shots == main.projectiles.POOL and main.projectiles.rings.size() == 1 and max_burning >= BURNING_MIN, "the load: %d fireballs in flight (the pool), a Ring of Fire, up to %d enemies burning" % [max_shots, max_burning])
+	check(metrics.p95_ms <= P95_BUDGET_MS, "Map 1's combat chunk (wrapped) + its worst case of 11 enemies + 64 fireballs + ring + burns: p95 %.2f ms <= %.1f ms" % [metrics.p95_ms, P95_BUDGET_MS])
 	var f := FileAccess.open(out_dir + "frametimes.csv", FileAccess.WRITE)
 	if f:
 		f.store_line("ms")

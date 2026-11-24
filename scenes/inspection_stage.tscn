@@ -1,0 +1,33 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/inspection_stage.gd" id="stage"]
+[ext_resource type="PackedScene" path="res://assets/held_grimoire/rose_compass_grimoire.glb" id="book"]
+[ext_resource type="PackedScene" path="res://assets/view_id/academy_id.glb" id="id"]
+
+[sub_resource type="Environment" id="env"]
+ambient_light_source = 2
+ambient_light_color = Color(1, 0.97, 0.93, 1)
+ambient_light_energy = 0.85
+reflected_light_source = 1
+
+[node name="InspectionStage" type="Node3D"]
+script = ExtResource("stage")
+
+[node name="Camera" type="Camera3D" parent="."]
+position = Vector3(0, 0, 3)
+projection = 1
+size = 1.08
+near = 0.01
+current = true
+
+[node name="Studio" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Key" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.48, -0.42, 0.1)
+light_energy = 0.65
+
+[node name="BookMount" type="Node3D" parent="."]
+[node name="Book" parent="BookMount" instance=ExtResource("book")]
+[node name="Credential" parent="." instance=ExtResource("id")]
+[node name="QuestionCard" parent="." instance=ExtResource("id")]

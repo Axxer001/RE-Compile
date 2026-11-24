@@ -1,7 +1,7 @@
 extends RefCounted
-# Sir's R14 (handoff §10): the Effects tab on T (rows with icon, name,
-# buff/debuff, live description and countdown; empty state; a hit closes it;
-# also a tab in the Grimoire panel), the Burn visual on enemies (on and off
+# Sir's R14 (handoff §10): the player's effects (rows with name, buff/debuff,
+# live description and countdown; empty state), shown on the held book's status
+# page since the T overlay was removed [Sir, 2026-11-21], the Burn visual on enemies (on and off
 # with the effect, small and faint), and floating damage numbers (one per
 # applied hit, none for duplicates, orange Burn ticks that merge, larger for
 # the special, the settings toggle, the pool cap of 40).
@@ -31,54 +31,36 @@ static func run(check: Callable, c: Node3D) -> void:
 	sh.inert = true
 	var p: CharacterBody3D = c.player
 	var pc: Node3D = c.pcombat
-	var ep: CanvasLayer = c.effects_panel
 
-	# ---- the Effects tab -------------------------------------------------------------------
-	check.call(Settings.LAYOUT == 3 and "effects_tab" in Settings.ACTIONS and s.input.action_for_event(key(KEY_T)) == "effects_tab", "T is the rebindable Effects action (key layout 3) [R14]")
+	# ---- the player's effects: on the held book's status page (page 5); T removed [Sir, 2026-11-21]
+	check.call(not "effects_tab" in Settings.ACTIONS and not InputMap.has_action("effects_tab") and s.input.action_for_event(key(KEY_T)) == "", "T is unassigned: no Effects overlay (the held book's page 5 shows the effects)")
 	s.handle_event(key(KEY_T))
 	s.step(DT)
-	check.call(ep.visible and s.input.context == InputRouter.Context.OVERLAY and ep.shown_text() == "No active effects." and ep.list.get_child(0).name == "Empty", "T opens the Effects tab: 'No active effects.' with none")
-	s.handle_event(key(KEY_T))
-	check.call(not ep.visible and s.input.context == InputRouter.Context.GAMEPLAY, "T again closes it")
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, s.run.time) # Cultivate, 10 s
+	check.call(s.input.context == InputRouter.Context.GAMEPLAY and c.find_child("EffectsPanel", true, false) == null, "pressing T does nothing")
+	check.call(c.effect_rows(s.run.time).is_empty() and pc.rig.status_info().effects.is_empty(), "no effects: page 5 lists none")
+	pc.ready_at.erase("spell_2")
+	pc.use_slot("spell_2", Vector2.ZERO, s.run.time) # Cultivate, 10 s
 	c.concuss(s.run.time + 1.5, 0.2)
-	s.handle_event(key(KEY_T))
-	s.step(DT)
-	var rows: Array = ep.rows
+	var rows: Array = pc.rig.status_info().effects
 	var cult: Dictionary = rows.filter(func(r): return r.id == "Cultivate")[0] if rows.any(func(r): return r.id == "Cultivate") else {}
 	var conc: Dictionary = rows.filter(func(r): return r.id == "Concuss")[0] if rows.any(func(r): return r.id == "Concuss") else {}
-	check.call(not cult.is_empty() and cult.kind == "buff" and cult.text == "+10% Magic Pow, +20% Spell Mastery, +15% Atk Spd." and cult.name == "Cultivate", "a Cultivate row: buff, '%s'" % cult.get("text", "?"))
-	check.call(not conc.is_empty() and conc.kind == "debuff" and conc.text.begins_with("Mov Spd and Atk Spd -80%") and ep.list.get_child_count() == rows.size(), "a Concussed row: debuff, '%s'; one line per effect, each with its icon" % conc.get("text", "?"))
+	check.call(not cult.is_empty() and cult.kind == "buff" and cult.text == "+10% Magic Pow, +20% Spell Mastery, +15% Atk Spd." and cult.name == "Cultivate", "page 5: a Cultivate row, buff, '%s'" % cult.get("text", "?"))
+	check.call(not conc.is_empty() and conc.kind == "debuff" and conc.text.begins_with("Mov Spd and Atk Spd -80%"), "page 5: a Concussed row, debuff, '%s'" % conc.get("text", "?"))
 	var t0: float = cult.s
-	var shown0: String = (ep.list.get_child(rows.find(cult)).get_node("Time") as Label).text
 	steps(c, 1.6) # past Concuss's 1.5 s
-	var cult2: Dictionary = ep.rows.filter(func(r): return r.id == "Cultivate")[0]
-	var shown1: String = (ep.list.get_child(ep.rows.find(cult2)).get_node("Time") as Label).text
-	check.call(absf(t0 - cult2.s - 1.6) < 0.05 and shown0 != shown1 and shown1.ends_with(" s") and not ep.rows.any(func(r): return r.id == "Concuss"), "the times count down live (%s -> %s); Concuss gone when it ends" % [shown0, shown1])
-	# A hit closes it (the overlay rule).
-	p.health.apply(DamagePacket.new(94001, "test", "infected", 3.0, "bite"), s.run.time)
-	check.call(not ep.visible and s.input.context == InputRouter.Context.GAMEPLAY, "a hit closes the Effects tab")
+	var rows2: Array = pc.rig.status_info().effects
+	var cult2: Dictionary = rows2.filter(func(r): return r.id == "Cultivate")[0]
+	check.call(absf(t0 - cult2.s - 1.6) < 0.05 and not rows2.any(func(r): return r.id == "Concuss"), "page 5's times count down live; Concuss gone when it ends")
 	# Burn on the player: a debuff row with its damage per second.
 	c.effects.apply("player", "Burn", 5.0, s.run.time, "test", 150.0)
 	var burn_rows: Array = c.effect_rows(s.run.time).filter(func(r): return r.id == "Burn")
 	check.call(burn_rows.size() == 1 and burn_rows[0].kind == "debuff" and burn_rows[0].text.begins_with("Takes 3 fire damage every second"), "a Burn row with live numbers: '%s'" % (burn_rows[0].text if burn_rows.size() else "?"))
 	c.effects.clear_target("player")
-	# Effects live on T only [Sir]: the Tab panel has no Effects view.
 	var gp: CanvasLayer = c.grimoire_panel
 	s.handle_action("grimoire")
 	gp.show_tab("effects")
-	check.call(gp.tab == "grimoire" and gp.VIEWS == ["grimoire", "player_id"], "the Tab panel has only the Grimoire and the Player ID; Effects is T's own")
+	check.call(gp.tab == "grimoire" and gp.VIEWS == ["grimoire", "player_id"], "the Tab panel has only the Grimoire and the Player ID")
 	s.handle_action("grimoire")
-	# The T panel draws each icon at a fixed 48 px tile (it once drew the file's 128 px).
-	pc.ready_at.erase("skill_1")
-	pc.use_slot("skill_1", Vector2.ZERO, s.run.time)
-	s.handle_event(key(KEY_T))
-	s.step(DT)
-	var tile: Control = ep.list.find_child("Tile", true, false)
-	var ic: TextureRect = tile.find_child("Icon", true, false) if tile else null
-	check.call(tile != null and tile.custom_minimum_size == Vector2(48, 48) and ic != null and ic.expand_mode == TextureRect.EXPAND_IGNORE_SIZE and ic.custom_minimum_size.x <= 48.0, "the T panel's icons sit in fixed 48 px tiles")
-	s.handle_event(key(KEY_T))
 
 	# ---- Burn visual on enemies --------------------------------------------------------------
 	c.publish(DT)
@@ -90,6 +72,26 @@ static func run(check: Callable, c: Node3D) -> void:
 	steps(c, 0.6)
 	var quiet: bool = not sh.embers.visible and sh.embers.find_children("*", "GPUParticles3D", true, false).all(func(g): return not g.emitting)
 	check.call(off0 and on and not sh.burning and quiet and is_equal_approx(sh._skin.emission_energy_multiplier, sh._skin_energy), "Burn on an enemy: Binbun flames on the body and a faint glow (<= 30%), gone the moment Burn ends [R14, Phase 2]")
+	# Only the nearest burning Sprites wear the flames; the rest glow and flicker [perf, 2026-11-14].
+	var keep_full: int = c.vfx.embers_full
+	c.vfx.embers_full = 1
+	var sh2: CharacterBody3D = c.enemies["sprite_2"] # a second, farther Sprite (parked ones are hidden)
+	sh2.visible = true
+	sh2.reset_to(sh.global_position + Vector3(0, 0, 12), 0.0)
+	var all_ids: Array = ["sprite_1", "sprite_2"]
+	for id in all_ids: c.effects.apply(id, "Burn", 5.0, s.run.time, "player", 100.0)
+	c.publish(DT)
+	var eye: Vector3 = c.get_viewport().get_camera_3d().global_position
+	var by_near: Array = all_ids.map(func(id): return c.enemies[id])
+	by_near.sort_custom(func(a, b): return eye.distance_squared_to(a.global_position) < eye.distance_squared_to(b.global_position))
+	var full_n: int = by_near.filter(func(e): return e.burn_full and e.embers != null and e.embers.visible).size()
+	var rest_ok: bool = by_near.slice(1).all(func(e): return e.burning and not e.burn_full and (e.embers == null or not e.embers.visible) and e._skin.emission_energy_multiplier > 0.0 and e._skin.emission_energy_multiplier <= 0.3 + 1e-6)
+	check.call(by_near.size() >= 2 and full_n == 1 and by_near[0].burn_full and rest_ok, "of %d burning Sprites only the nearest wears the flames; the rest glow (<= 30%%), flickering" % by_near.size())
+	for id in all_ids: c.effects.clear_target(id)
+	c.publish(DT)
+	check.call(by_near.all(func(e): return not e.burning and is_equal_approx(e._skin.emission_energy_multiplier, e._skin_energy)), "Burn's end puts every Sprite's glow back")
+	c.vfx.embers_full = keep_full
+	sh2.visible = false
 
 	# ---- damage numbers --------------------------------------------------------------------------
 	var dn: Node3D = c.damage_numbers

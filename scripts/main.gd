@@ -6,20 +6,25 @@ extends Node3D
 
 const GameSession = preload("res://scripts/core/game_session.gd")
 const Greybox = preload("res://scripts/world/greybox.gd")       # the movement arena (tests)
-const DarkForest = preload("res://scripts/world/dark_forest.gd") # the game world [P7]
+const DarkForest = preload("res://scripts/world/dark_forest.gd") # the forest's kit and props library
+const Map1World = preload("res://scripts/world/map1_world.gd")   # the game world: Map 1, the Dark Forest [Sir, 2026-11-20]
+const Map1Rules = preload("res://scripts/core/map1_rules.gd")
 const GrassFieldScript = preload("res://scripts/world/grass_field.gd")
 const SpellService = preload("res://scripts/combat/spell_service.gd")
+const GamblerService = preload("res://scripts/combat/gambler_service.gd")
 const TrainingField = preload("res://scripts/world/training_field.gd")
 const NoiseService = preload("res://scripts/world/noise_service.gd")
 const PlayerScene = preload("res://scenes/player/player.tscn")
 const NavigationGrid = preload("res://scripts/world/navigation_grid.gd")
 const BlightedSprite = preload("res://scripts/actors/blighted_sprite.gd")
+const ForestGhoul = preload("res://scripts/actors/forest_ghoul.gd")   # the Dark Forest roster [Sir, 2026-11-15]
+const KostasMortus = preload("res://scripts/actors/kostas_mortus.gd")
+const EnemyArrows = preload("res://scripts/combat/enemy_arrows.gd")
 const CombatDirector = preload("res://scripts/core/combat_director.gd")
 const DeathPanel = preload("res://scripts/ui/death_panel.gd")
 const LoFiView = preload("res://scripts/render/lofi_view.gd")
 const Interactable3D = preload("res://scripts/world/interactable3d.gd")
 const Hud = preload("res://scripts/ui/hud.gd")
-const EffectsPanel = preload("res://scripts/ui/effects_panel.gd")
 const DamageNumbers = preload("res://scripts/ui/damage_numbers.gd")
 const Banner = preload("res://scripts/ui/banner.gd")
 const Vfx = preload("res://scripts/render/vfx.gd")
@@ -33,7 +38,7 @@ const DamagePacket = preload("res://scripts/combat/damage_packet.gd")
 const CombatController = preload("res://scripts/combat/combat_controller.gd")
 const GROUND_MAT := "res://assets/BinbunGrass/src/materials/grass_01/grass_ground_01.tres"
 const GROUND_SHADER := "res://assets/BinbunGrass/src/shader/ground_lit.gdshader"
-const LOFI_SHRINK := 3        # pixel look [Sir, 2026-11-13]: the world at 1/3 size (640 x 360 of 1080p), nearest-neighbour up; the HUD stays sharp
+const LOFI_SHRINK := 1        # native resolution [Sir, 2026-11-20: the pixel look is removed]; the view's SubViewport stays for the camera kicks
 const ArtDirection = preload("res://scripts/render/art_direction.gd")
 const PauseMenu = preload("res://scripts/ui/pause_menu.gd")
 const GrimoirePanel = preload("res://scripts/ui/grimoire_panel.gd")
@@ -96,16 +101,25 @@ const RESPAWN_S := 12.0        # [design] a dead Sprite returns to the pool afte
 # so the 20-kill mission stays reachable.
 const MAX_ALIVE := 20          # [Sir R6]
 const TARGET_ALIVE := 8        # [design] how many the spawner keeps in play
-const SPAWN_EVERY_S := 4.0     # [design]
+const FOREST_CAPACITY := 64
+const FOREST_POPULATION := 64
+const FOREST_SPAWN_EVERY_S := 8.0
+const SPAWN_EVERY_S := 4.0     # movement arena
 var next_spawn := 0.0
 var spawning := true           # off while tests park the enemies
+var map1: Node3D               # Map1World: camp, pathways, the wrap-around combat chunk (forest only)
+var rules := Map1Rules.new()   # Map 1's rules: combat, cooldown, objectives, drops
+var keeps_found_pages := false # Map 1: found pages outlive a death [spec §1]
+const M1_POOL := {"sprite": 8, "ghoul": 7, "mortus": 6} # made up front; more on demand
+const M1_RING := Vector2(32, 40)  # spawns this far from the player, just past the fog [spec §4]
+const M1_CORPSE_S := 6.0          # a body lies this long, then goes back to the pool
+const M1_FADE_S := 1.6            # a combat spawn fades in from the mist [layout pass §3]
 var mission_hud: Label         # top-right mission tracker
 var footstep_timer := 0.0
 var death_panel: CanvasLayer
 var died_at := -1.0
 var page_pickups := {}         # page id -> Interactable3D (a page lying in the world)
 var grimoire_panel: CanvasLayer # Tab: Grimoire + Player ID (P5)
-var effects_panel: CanvasLayer  # T: the player's effects [R14]
 var damage_numbers: Node3D      # floating numbers on enemy hits [R14]
 var banner: CanvasLayer         # level / rank-up announcements [R15]
 var vfx: Node3D                 # pooled spell effects (trails, bursts, scorches, flashes)
@@ -117,8 +131,18 @@ var died_at_run := -1         # run id of the last death (for the panel)
 var hazards := Hazards.new()   # blasts and fire zones (the base for fireball AOE and Burn)
 var projectiles := ProjectileService.new() # fireballs in flight and their detonations (P2)
 var spells := SpellService.new() # Dragon's Breath, Firefly, Explosion [2026-11-14]
+var gambler := GamblerService.new() # the Gambler set: the die, coins, the coin purse [2026-11-14]
 var training: Node3D # the Training Field, through the portal beside the camp [2026-11-14]
 var effects := EffectSystem.new() # timed effects on actors (Burn)
+var arrows := EnemyArrows.new()   # the Forest Ghouls' arrows [2026-11-15]
+# The Dark Forest roster [Sir, 2026-11-15; docs/plan-dark-forest-roster.md]: Sprites in
+# packs of 4, Forest Ghouls in pairs in every fourth spawn zone, one Kostas Mortus
+# guarding each clearing that holds a page; at most 20 Sprites awake at once.
+const AWAKE_SPRITES := 12
+const GHOUL_ZONE_EVERY := 4     # zone index % 4 == 3 holds a Ghoul pair, not a Sprite pack
+const ARENA_GHOULS := 2         # the arena keeps a pair parked for tests
+const MORTUS_MAX := 3            # at most three guards, in distinct page clearings
+var player_knock := {}           # {dir, left, speed}: a knockback still pushing the player
 var effect_packets := {}       # effect tick action string -> DamagePacket id (each tick lands once)
 var sfx: Node3D                # synthesised sound effects
 var was_on_floor := true
@@ -141,19 +165,25 @@ func _ready() -> void:
 	e.adjustment_brightness = 1.0
 	env.environment = e
 	add_child(env)
-	level = DarkForest if world_kind == "forest" else Greybox
-	var built: Dictionary = level.build(self)
+	level = Map1World if world_kind == "forest" else Greybox
+	keeps_found_pages = world_kind == "forest"
+	var built: Dictionary
+	if world_kind == "forest":
+		map1 = Map1World.new()
+		built = map1.build(self)
+	else: built = level.build(self)
 	lamps = built.lamps
 	spawn = built.spawn
-	nav.setup(built.bounds[0], built.bounds[1])
-	nav_climb.setup(built.bounds[0], built.bounds[1])
+	nav.setup(built.bounds[0], built.bounds[1], 1.0 if world_kind == "forest" else nav.CELL)
+	nav_climb.setup(built.bounds[0], built.bounds[1], 1.0 if world_kind == "forest" else nav_climb.CELL)
 	if world_kind == "forest":
 		_forest_node = built.node
 		_fixed_solids = built.solids
 		training = TrainingField.new()
 		add_child(training)
 		training.build(self)
-		_fixed_solids = _fixed_solids + training.forest_solids() # its portal frame: enemies path round it
+		_fixed_solids = _fixed_solids + training.forest_solids() # its portal frame, at the camp: enemies path round it
+		zones = [{"id": "park", "at": Map1World.SPAWN.at + Vector3(0, -50, 0), "yaw": 0.0}] # the pool waits out of the world
 		if not new_map():
 			get_tree().quit(1)
 			return
@@ -175,7 +205,7 @@ func _ready() -> void:
 	var enemy_root := Node3D.new()
 	enemy_root.name = "Enemies"
 	add_child(enemy_root)
-	for i in MAX_ALIVE:
+	for i in (int(M1_POOL.sprite) if world_kind == "forest" else MAX_ALIVE):
 		var spec: Dictionary = zones[i % zones.size()]
 		var id := "sprite_%d" % (i + 1)
 		var foe: CharacterBody3D = BlightedSprite.new()
@@ -188,6 +218,10 @@ func _ready() -> void:
 		foe.health.damaged.connect(func(pk, applied: float) -> void:
 			if applied > 0.0 and pk.source_faction == "player": session.meta.note_hit(applied))
 		foe.health.died.connect(func(_pk) -> void: on_enemy_died(id))
+		_wire_enemy(foe)
+	var ghoul_n: int = ARENA_GHOULS if world_kind != "forest" else int(M1_POOL.ghoul)
+	for i in ghoul_n: _add_enemy(enemy_root, "ghoul_%d" % (i + 1), ForestGhoul.new(), zones[i % zones.size()])
+	for i in (MORTUS_MAX if world_kind != "forest" else int(M1_POOL.mortus)): _add_enemy(enemy_root, "mortus_%d" % (i + 1), KostasMortus.new(), zones[i % zones.size()])
 	audio = AudioMix.new()
 	audio.name = "AudioMix"
 	add_child(audio)
@@ -204,6 +238,7 @@ func _ready() -> void:
 	hazard_root.name = "Hazards"
 	add_child(hazard_root)
 	hazards.root = hazard_root
+	hazards.ground_fn = func(q: Vector2) -> float: return map1.height_at(q) if map1 else 0.0
 	var spell_root := Node3D.new()
 	spell_root.name = "Spells"
 	add_child(spell_root)
@@ -211,14 +246,21 @@ func _ready() -> void:
 	vfx = Vfx.new()
 	add_child(vfx)
 	projectiles.vfx = vfx
+	projectiles.prewarm_visuals()
 	projectiles.effects = effects
+	effects.resist_fn = effect_resist
+	arrows.root = spell_root
+	arrows.vfx = vfx
 	pcombat = PlayerCombat.new()
 	pcombat.name = "PlayerCombat"
 	add_child(pcombat)
 	pcombat.setup(self)
 	spells.root = spell_root
 	spells.setup(self)
+	gambler.root = spell_root
+	gambler.setup(self)
 	player.health.damaged.connect(func(_pk, applied: float) -> void: spells.on_player_hurt(applied, session.run.time)) # a hit breaks Explosion's charge
+	player.health.death_guard = pcombat.rise_guard # Rise of the Phoenix
 	_build_interactables()
 	death_panel = DeathPanel.new()
 	add_child(death_panel)
@@ -234,10 +276,6 @@ func _ready() -> void:
 	damage_numbers = DamageNumbers.new()
 	damage_numbers.name = "DamageNumbers"
 	add_child(damage_numbers)
-	effects_panel = EffectsPanel.new()
-	effects_panel.name = "EffectsPanel"
-	add_child(effects_panel)
-	effects_panel.close_requested.connect(func() -> void: session.handle_action("effects_tab"))
 	_make_hud()
 	lofi = LoFiView.new()
 	add_child(lofi)
@@ -246,13 +284,8 @@ func _ready() -> void:
 	get_viewport().disable_3d = true # the view's SubViewport draws the world
 	art = ArtDirection.new()
 	art.apply(self)
-	art.set_colour16(true)
-	_sync_pixel_grid()
-	get_viewport().size_changed.connect(_sync_pixel_grid)
-	if world_kind == "forest": # thicker night fog between the trees [handoff §7]
-		e.fog_density = 0.022
-		e.fog_light_color = Color(0.06, 0.08, 0.11)
-		art.apply_night_sky(e) # Binbun night sky [Phase 3]
+	if world_kind == "forest": # the Silent Hill night: the camera draws no further than the fog hides [graphics direction]
+		player.camera.far = ArtDirection.FAR_CLIP
 		var floor_mesh: MeshInstance3D = find_child("floor", true, false).find_children("*", "MeshInstance3D", true, false)[0] if find_child("floor", true, false) else null
 		if floor_mesh and ResourceLoader.exists(GROUND_MAT) and ResourceLoader.exists(GROUND_SHADER):
 			var gm: ShaderMaterial = (load(GROUND_MAT) as ShaderMaterial).duplicate() # the grass's ground colour
@@ -324,14 +357,8 @@ func apply_settings() -> void:
 # cap are left alone when a test or benchmark drives the world (external_driver).
 func apply_graphics() -> void:
 	var g: Dictionary = session.settings.gfx
-	if lofi and lofi.container and lofi.container.stretch_shrink != int(g.pixel_scale):
-		lofi.container.stretch_shrink = int(g.pixel_scale)
-		lofi.shrink = int(g.pixel_scale)
-		_sync_pixel_grid.call_deferred()
 	if player and player.get("tuning") != null: player.tuning.fov = float(g.fov)
-	if art:
-		art.set_colour16(bool(g.colour16))
-		art.set_grain([0.0, 0.025, 0.05][int(g.film_grain)])
+	if art: art.set_grain([0.0, 0.035, 0.06][int(g.film_grain)]) # grain raised a little [graphics direction]
 	if lofi: lofi.kicks_enabled = bool(g.camera_shake)
 	var we: Array = find_children("*", "WorldEnvironment", true, false)
 	if not we.is_empty() and RenderingServer.get_current_rendering_method() == "forward_plus":
@@ -397,6 +424,7 @@ func simulate(intent: Dictionary, delta: float) -> void:
 	if player.health.dead: return
 	player.carry_factor = pcombat.combat.movement_factor()
 	player.stats = session.stats # Mov Spd drives the run speed
+	spells.on_input(bool(intent.get("attack", false)), session.run.time) # Flight's spot / Call's areas
 	intent = frozen_intent(intent)
 	player.simulate(intent, delta, session.run.time)
 	hold_for_charge()
@@ -412,17 +440,40 @@ func simulate(intent: Dictionary, delta: float) -> void:
 
 # Explosion's charge: no movement, look or action, held where it began (in the air too).
 func frozen_intent(intent: Dictionary) -> Dictionary:
+	if spells.move_locked(): return {"move": Vector2.ZERO} # Flight / Call: no moving, looking is free
 	if not spells.frozen(): return intent
 	player._look_queue = Vector2.ZERO
 	return {"move": Vector2.ZERO}
 
 func hold_for_charge() -> void:
-	if not spells.frozen(): return
+	if not spells.flight.is_empty():
+		player.global_position = spells.flight_position(session.run.time)
+		player.velocity = Vector3.ZERO
+		fall_speed = 0.0 # no landing kick or fall stun from the dive
+		return
+	if not (spells.frozen() or not spells.calling.is_empty()): return
 	player.global_position = spells.hold_position()
 	player.velocity = Vector3.ZERO
 
 # What the crosshair is on: {kind: "page"|"", target}.
+# A page pickup within PAGE_PICKUP_R of the player counts without looking at it
+# [Sir, 2026-11-14]: the nearest one in range wins.
+const PAGE_PICKUP_R := 5.0
+func page_in_reach() -> Node3D:
+	var best: Node3D = null
+	var best_d := PAGE_PICKUP_R
+	for id in page_pickups:
+		var pg: Node3D = page_pickups[id]
+		if not pg.visible or not pg.is_inside_tree() or session.grimoire.is_found(id): continue
+		var d: float = pg.global_position.distance_to(player.global_position + Vector3(0, 0.9, 0))
+		if d <= best_d:
+			best_d = d
+			best = pg
+	return best
+
 func target_in_view() -> Dictionary:
+	var near_page := page_in_reach()
+	if near_page != null: return {"kind": "page", "target": near_page}
 	var hit: Dictionary = player.look_target()
 	if hit.is_empty(): return {"kind": "", "target": null}
 	var col: Object = hit.collider
@@ -452,7 +503,7 @@ func pick_up_page(id: String) -> String:
 # A pickup shows only while its page is not yet found this run (unlocked pages are known for good).
 func _sync_page_pickups() -> void:
 	for id in page_pickups:
-		var on: bool = not session.grimoire.is_found(id)
+		var on: bool = not session.grimoire.is_found(id) and (map1 == null or bool(page_pickups[id].get_meta("dropped", false)))
 		page_pickups[id].visible = on
 		for ch in page_pickups[id].get_children():
 			if ch is CollisionShape3D: ch.disabled = not on
@@ -460,7 +511,7 @@ func _sync_page_pickups() -> void:
 # Death [Sir R5]: the run is lost, what was learned is kept.
 func show_death_panel() -> void:
 	var pr: RefCounted = session.progression
-	death_panel.show_panel("Fell at level %d with %d kills.\nLost: level, EXP, stats, chant gains, loadout and mission kills.\nKept: unlocked pages, rank %s and every stat's chant tier." % [pr.level, pr.kills, pr.rank], "YOU DIED", "Return to camp")
+	death_panel.show_panel("Fell at level %d with %d kills.\nLost: level, EXP, stats, chant gains, loadout and mission kills; every chant is back to tier 1.\nKept: unlocked pages and rank %s." % [pr.level, pr.kills, pr.rank], "YOU DIED", "Return to camp")
 
 # ---- pages in the world -----------------------------------------------------
 
@@ -468,6 +519,7 @@ func _build_interactables() -> void:
 	var root := Node3D.new()
 	root.name = "Interactables"
 	add_child(root)
+	if map1: for id in DarkForest.page_ids(): page_spots[id] = zones[0].at # Map 1: every page waits for a drop
 	for id in page_spots:
 		var pg: StaticBody3D = Interactable3D.new()
 		root.add_child(pg)
@@ -501,12 +553,24 @@ func _build_interactables() -> void:
 		pg.add_child(glow)
 		page_pickups[id] = pg
 func hide_overlays() -> void:
-	if grimoire_panel != null: grimoire_panel.close()
-	if effects_panel != null: effects_panel.close()
+	if grimoire_panel != null and grimoire_panel.visible:
+		grimoire_panel.close()
+		if pcombat.rig and not player.health.dead: pcombat.rig.equip(true)
 	if not external_driver and not session.paused(): Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 # Tab (the router opened the "grimoire" overlay): the world keeps running [Sir].
+# Why the Grimoire may not open right now ("" = it may). Gambling Addiction
+# keeps it shut, chants included [Sir, 2026-11-15].
+const ADDICTION_GRIMOIRE := "Gambling Addiction: the Grimoire won't open"
+func grimoire_blocked() -> String:
+	return ADDICTION_GRIMOIRE if gambler.addicted else ""
+
+# Addiction begins with the Grimoire open: it shuts.
+func close_grimoire() -> void:
+	if grimoire_panel != null and grimoire_panel.visible: session.handle_action("grimoire")
+
 func show_grimoire() -> void:
+	if pcombat.rig: pcombat.rig.equip(false)
 	grimoire_panel.open("grimoire")
 	if not external_driver: Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -514,24 +578,23 @@ func show_grimoire() -> void:
 const CLEARING_NAMES := ["Camp Ember", "The Crossing", "West Hollow", "East Hollow", "The Stones", "North-west Glade", "North-east Glade"]
 func location_name() -> String:
 	if world_kind != "forest": return "Training Arena"
-	var i: int = DarkForest.clearing_at(player.global_position)
-	return "Dark Forest, " + (CLEARING_NAMES[i] if i >= 0 and i < CLEARING_NAMES.size() else "deep in the trees")
+	var reg: Dictionary = map1.region_of(player.global_position) if map1 else {"kind": ""}
+	match String(reg.kind):
+		"camp": return "Dark Forest, Camp Ember"
+		"pathway": return "Dark Forest, a pathway"
+		"chunk": return "Dark Forest, clearing %d" % int(reg.chunk.index)
+	return "Dark Forest, deep in the trees"
 
 # The MVP has one region at world level 1 (later regions raise it).
 func world_level() -> int:
 	return 1
 
-# T (the router opened the "effects" overlay) [R14]: the world keeps running.
-func show_effects() -> void:
-	effects_panel.open()
-	effects_panel.refresh(effect_rows(session.run.time))
-	if not external_driver: Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-
 static func _num(x: float) -> String:
 	return str(roundi(x)) if absf(x - roundf(x)) < 0.05 else "%.1f" % x
 
-# The Effects tab's rows [R14]: each status on the player with its plain-words
-# description (live numbers), buff or debuff, and the time left.
+# The player's effects [R14]: each status with its plain-words description (live
+# numbers), buff or debuff, and the time left. The held book's status page (page 5)
+# shows them; the T overlay was removed [Sir, 2026-11-21].
 func effect_rows(now: float) -> Array:
 	var out := []
 	for st in player_statuses(now):
@@ -551,13 +614,17 @@ func effect_rows(now: float) -> Array:
 				vals = {"dps": _num(float(e.get("pow", 100.0)) * float(EffectSystem.DEFS.Burn.dps_pct))}
 			"Scorched Slow":
 				vals = {"slow": _num((1.0 - projectiles.SCORCHED_SLOW.mult) * 100.0)}
+			"Rise of the Phoenix":
+				vals = {"state": pcombat.rise_label()}
+				until_text = "Rise " + pcombat.rise_label()
+			"Gambling Addiction":
+				vals = {"state": gambler.addiction_label()}
+				until_text = "until 2 rolls above 3 (%s)" % gambler.addiction_label()
+			"Where are my Coins?":
+				vals = {"coins": gambler.purse}
+				until_text = "Coins %d/%d" % [gambler.purse, gambler.PURSE.max]
 		out.append({"id": id, "name": EffectSystem.display_name(id), "kind": EffectSystem.kind_of(id), "text": EffectSystem.describe(id, vals), "s": st.s, "until_text": until_text})
 	return out
-
-# Session hook: a hit while an overlay is open [Sir R1]. True = handled here
-# (a page unlock restarts with a fresh question and stays open).
-func overlay_hit() -> bool:
-	return grimoire_panel != null and grimoire_panel.on_hit()
 
 # Footstep noise: running and dashing/sliding are heard, crouching is silent.
 func footsteps(delta: float) -> void:
@@ -575,9 +642,16 @@ func level_solids() -> Array:
 # Walkers' grid (every solid) and the Sprites' climb grid: a solid whose top a
 # Sprite can climb to (<= CLIMB_MAX) is passable there [R12].
 func _rebuild_navs() -> void:
+	if map1:
+		var b: Array = map1.nav_bounds()
+		nav.setup(b[0], b[1], 1.0)
+		nav_climb.setup(b[0], b[1], 1.0)
+		nav.surface = map1
+		nav_climb.surface = map1
+		static_solids = map1.solids() + (_fixed_solids if map1.camp_loaded else [])
 	var all := level_solids()
 	nav.rebuild(all)
-	nav_climb.rebuild(all.filter(func(b: AABB) -> bool: return b.end.y > BlightedSprite.CLIMB_MAX + 0.01))
+	nav_climb.rebuild(all.filter(func(b: AABB) -> bool: return b.end.y > (nav.surface.height_at(Vector2(b.get_center().x,b.get_center().z)) if nav.surface else 0.0) + BlightedSprite.CLIMB_MAX + 0.01))
 
 # Line of sight for enemies: nothing on the world layer between the points.
 func clear_line(from: Vector3, to: Vector3) -> bool:
@@ -616,6 +690,8 @@ func effects_step(delta: float) -> void:
 	hazards.tick(delta, session.run.time, {"targets": hazard_targets(), "los": clear_line, "noise": noise})
 	projectiles.tick(delta, session.run.time, {"targets": combat_targets(), "ray": world_ray, "los": clear_line, "noise": noise})
 	spells.tick(delta, session.run.time)
+	gambler.tick(delta, session.run.time)
+	arrows.tick(delta, session.run.time, {"player": player, "player_health": player.health, "ray": world_ray})
 	if training: training.tick(delta, session.run.time)
 	vfx.tick(session.run.time)
 	_effect_ticks(session.run.time)
@@ -642,14 +718,159 @@ func actors_step(delta: float, now: float) -> void:
 	if nav_dirty:
 		_rebuild_navs()
 		nav_dirty = false
+	if map1: _map1_step(delta, now)
 	var ctx := {"player": player, "player_health": player.health, "noise": noise.events, "nav": nav_climb, "los": clear_line, "concuss": concuss, "ray": world_ray}
 	var any_aggro := false
+	var awake: Dictionary = _awake_sprites()
+	_push_player(delta)
 	for id in enemies:
+		var foe: CharacterBody3D = enemies[id]
+		if foe.reserve: continue
+		if foe.kind == "sprite" and not awake.has(id) and world_kind == "forest" and not foe.health.dead and foe.state == BlightedSprite.State.IDLE_ROAM and not foe.inert:
+			foe.set_dormant(true) # past the 20 awake: it waits, idle, until a slot frees
+			continue
+		# Distant idle residents keep their identity and health; combat always runs at full rate.
+		foe.set_dormant(world_kind == "forest" and not foe.reserve and not foe.inert and not foe.health.dead and foe.state == BlightedSprite.State.IDLE_ROAM and foe.distance_to_player(player) > 64.0 and not effects.has(id, "Burn", now))
+		if foe.dormant: continue
 		enemies[id].speed_mult = projectiles.SCORCHED_SLOW.mult if effects.has(id, projectiles.SCORCHED_SLOW.id, now) else 1.0
+		var concussed: bool = effects.has(id, spells.CONCUSS_ID, now)
+		if concussed: enemies[id].speed_mult = minf(enemies[id].speed_mult, spells.FLIGHT.concuss_mult)
+		enemies[id].atk_mult = spells.FLIGHT.concuss_mult if concussed else 1.0
+		enemies[id].speed_mult = minf(enemies[id].speed_mult, gambler.heavy_mult(id, now)) # Heavy Pockets
+		var rs: float = float(foe.resist)
+		if rs < 1.0: # Kostas Mortus: every stat reduction halved
+			foe.speed_mult = 1.0 - (1.0 - foe.speed_mult) * rs
+			foe.atk_mult = 1.0 - (1.0 - foe.atk_mult) * rs
+		ctx.nav = nav_climb if foe.can_climb else nav # the Ghoul and Mortus walk round ledges [Sir 2026-11-15b]
 		enemies[id].tick(delta, now, ctx)
 		if enemies[id].aggroed: any_aggro = true
 	_respawn(now)
 	director.update(now, any_aggro)
+
+# The 20 Sprites allowed awake [Sir, 2026-11-15]: every fighting one first, then
+# the nearest idle ones within the dormancy radius. Returns {id: true}.
+func _awake_sprites() -> Dictionary:
+	var out := {}
+	var idle: Array = []
+	for id in enemies:
+		var e: CharacterBody3D = enemies[id]
+		if e.kind != "sprite" or e.reserve or e.health.dead or not e.visible: continue
+		if e.state != BlightedSprite.State.IDLE_ROAM or e.inert: out[id] = true
+		elif e.distance_to_player(player) <= 64.0: idle.append(id)
+	idle.sort_custom(func(a, b): return enemies[a].distance_to_player(player) < enemies[b].distance_to_player(player))
+	for id in idle:
+		if out.size() >= AWAKE_SPRITES: break
+		out[id] = true
+	return out
+
+# Start-of-run placement: up to four Sprites per zone within the population cap, except
+# each fourth, Forest Ghoul pairs in those, and a Kostas Mortus beside each page in
+# its own clearing. The arena keeps its old Sprite layout and parks the rest.
+func _place_roster(occupied: Array) -> void:
+	if map1:
+		for e in enemies.values():
+			e.reset_to(zones[0].at, 0.0, noise.last_id())
+			_to_reserve(e)
+		return
+	var forest := world_kind == "forest"
+	var sprite_zones: Array = []
+	var ghoul_zones: Array = []
+	for i in zones.size():
+		if forest and i % GHOUL_ZONE_EVERY == GHOUL_ZONE_EVERY - 1: ghoul_zones.append(zones[i])
+		else: sprite_zones.append(zones[i])
+	var ns := 0
+	var nr := 0
+	var nm := 0
+	var mortus_spots: Array = _mortus_spots() if forest else []
+	var sprite_cap: int = FOREST_POPULATION - ghoul_zones.size() * 2 - mortus_spots.size() if forest else zones.size()
+	for id in enemies:
+		var e: CharacterBody3D = enemies[id]
+		var spec: Dictionary = {}
+		var at := Vector3.ZERO
+		var keep := false
+		match e.kind:
+			"sprite":
+				spec = sprite_zones[ns % sprite_zones.size()]
+				var slot: int = ns / sprite_zones.size()
+				at = spec.at + (Vector3(-0.8 if slot % 2 == 0 else 0.8, 0, -0.8 if slot < 2 else 0.8) if forest else Vector3.ZERO)
+				keep = ns < sprite_cap and (not forest or slot < 4)
+				ns += 1
+			"ghoul":
+				if not ghoul_zones.is_empty() and nr < ghoul_zones.size() * 2:
+					spec = ghoul_zones[nr / 2]
+					at = spec.at + Vector3(-1.2 if nr % 2 == 0 else 1.2, 0, 0)
+					keep = true
+				else: spec = zones[0]
+				nr += 1
+			"mortus":
+				if nm < mortus_spots.size():
+					spec = {"at": mortus_spots[nm], "yaw": 0.0}
+					at = mortus_spots[nm]
+					keep = true
+				else: spec = zones[0]
+				nm += 1
+		if at == Vector3.ZERO: at = spec.at
+		if forest and keep and Vector2(at.x - spawn.at.x, at.z - spawn.at.z).length() <= float(e.aggro_r) + 4.0: keep = false # a quiet start: nobody within detection of the camp
+		if forest and keep:
+			var initial := _initial_forest_spawn(at, occupied)
+			if initial.is_empty(): keep = false
+			else:
+				at = initial.at
+				occupied.append(at)
+		e.reset_to(at, spec.yaw, noise.last_id())
+		if not keep: _to_reserve(e)
+
+# Where each Kostas Mortus guards: 4 m from each page lying in the forest, one per clearing.
+func _mortus_spots() -> Array:
+	var out: Array = []
+	var seen := {}
+	for id in page_spots:
+		var spot: Vector3 = page_spots[id]
+		var ci: int = DarkForest.clearing_at(spot)
+		if seen.has(ci): continue
+		seen[ci] = true
+		out.append(spot + Vector3(4.0, 0, 0))
+		if out.size() >= MORTUS_MAX: break
+	return out
+
+# One enemy of the roster: placed and wired like the Sprite pool.
+func _add_enemy(enemy_root: Node3D, id: String, foe: CharacterBody3D, spec: Dictionary) -> void:
+	enemy_root.add_child(foe)
+	foe.setup(id, spec.at, spec.yaw)
+	enemies[id] = foe
+	foe.health.damaged.connect(func(_pk, applied: float) -> void:
+		if applied > 0.0: foe.alert_to(player.global_position))
+	foe.health.damaged.connect(func(_pk, applied: float) -> void: _number_for(foe, applied))
+	foe.health.damaged.connect(func(pk, applied: float) -> void:
+		if applied > 0.0 and pk.source_faction == "player": session.meta.note_hit(applied))
+	foe.health.died.connect(func(_pk) -> void: on_enemy_died(id))
+	_wire_enemy(foe)
+
+func _wire_enemy(foe: CharacterBody3D) -> void:
+	if foe.kind == "mortus": foe.hit_fx = func(at: Vector3) -> void: if vfx: vfx.mortus_impact(at, session.run.time)
+	else: foe.hit_fx = func(at: Vector3) -> void: if vfx: vfx.enemy_hit(at, session.run.time)
+	if foe.kind == "ghoul": foe.arrows = arrows
+	if foe.kind == "mortus": foe.knock_player = knock_player
+
+# EffectSystem.resist_fn: Kostas Mortus takes half of every effect.
+func effect_resist(target_id: String) -> float:
+	return float(enemies[target_id].resist) if enemies.has(target_id) else 1.0
+
+# Knockback on the player [Sir, 2026-11-15]: pushed `dist` metres along `dir` over a
+# short slide; casting is locked while it lasts (pcombat.control_until).
+const KNOCK_SPEED := 30.0
+func knock_player(dir: Vector3, dist: float) -> void:
+	var d := Vector3(dir.x, 0, dir.z)
+	if d.length() < 0.01: return
+	player_knock = {"dir": d.normalized(), "left": dist}
+	pcombat.control_until = maxf(pcombat.control_until, session.run.time + dist / KNOCK_SPEED + 0.05)
+
+func _push_player(delta: float) -> void:
+	if player_knock.is_empty(): return
+	var step: float = minf(float(player_knock.left), KNOCK_SPEED * delta)
+	var col := player.move_and_collide(player_knock.dir * step)
+	player_knock.left = float(player_knock.left) - step
+	if col != null or float(player_knock.left) <= 0.001: player_knock = {} # a tree or rock stops the push
 
 # Concuss [Sir R8]: Mov Spd and Atk Spd x0.2 until `until`; re-applying refreshes (same id).
 func concuss(until: float, mult: float) -> void:
@@ -659,30 +880,71 @@ func concuss(until: float, mult: float) -> void:
 # A kill: EXP and the kill count go straight to Progression [Sir: no orbs]; the
 # Sprite's effects end; its respawn clock starts.
 func on_enemy_died(id: String) -> void:
+	pcombat.on_enemy_killed(effects.has(id, "Burn", session.run.time), session.run.time) # Rise of the Phoenix
+	gambler.on_kill(session.run.time) # Where are my Coins?
 	effects.clear_target(id)
 	dead_at[id] = session.run.time
-	session.progression.on_kill()
+	session.progression.on_kill(int(enemies[id].kill_exp)) # Sprite 25, Ghoul 35, Mortus 200 [Sir, 2026-11-15]
 	session.meta.note_kill(session.progression.kills)
+	if map1 and rules.on_kill(String(enemies[id].kind)): drop_page(enemies[id].global_position)
 
 # The spawner: a dead Sprite goes back to the pool after RESPAWN_S; while fewer
 # than TARGET_ALIVE are in play (and never more than MAX_ALIVE), one comes out
 # every SPAWN_EVERY_S at a zone outside the player's aggro range (no pop-in attacks).
 func _respawn(now: float) -> void:
+	if map1:
+		for id in dead_at.keys():
+			if now - dead_at[id] < M1_CORPSE_S or enemies[id].inert: continue
+			_to_reserve(enemies[id])
+			dead_at.erase(id)
+		return
 	for id in dead_at.keys():
 		if now - dead_at[id] < RESPAWN_S or enemies[id].inert: continue
+		if enemies[id].kind == "mortus": continue # an elite stays down for the run
 		_to_reserve(enemies[id])
 		dead_at.erase(id)
 	if not spawning or now < next_spawn: return
-	if alive_count() >= mini(TARGET_ALIVE, MAX_ALIVE): return
-	var spot := _free_zone()
-	if spot.is_empty(): return
-	for id in enemies:
-		var e: CharacterBody3D = enemies[id]
-		if e.reserve:
-			var j := Vector3(spawn_rng.randf_range(-2.0, 2.0), 0, spawn_rng.randf_range(-2.0, 2.0))
-			e.reset_to(spot.at + j, spot.yaw)
-			next_spawn = now + SPAWN_EVERY_S
+	if alive_count() >= (FOREST_POPULATION if world_kind == "forest" else mini(TARGET_ALIVE, MAX_ALIVE)): return
+	# Failed attempts are also rate-limited, so a blocked source cannot query every tick.
+	next_spawn = now + (FOREST_SPAWN_EVERY_S if world_kind == "forest" else SPAWN_EVERY_S)
+	for e in enemies.values():
+		if not e.reserve: continue
+		if e.kind == "mortus" or (e.kind == "ghoul" and world_kind != "forest"): continue # elites are placed, not spawned
+		for attempt in 8:
+			var spot := _free_zone()
+			if spot.is_empty(): return
+			var jitter := Vector3(spawn_rng.randf_range(-2.0, 2.0), 0, spawn_rng.randf_range(-2.0, 2.0))
+			var candidate := _spawn_candidate(spot.at + jitter, e)
+			if candidate.is_empty(): continue
+			if not nav.find_path(spot.at, candidate.at).ok: continue
+			e.reset_to(candidate.at, spot.yaw)
 			return
+		return
+
+# Validate the final jittered position, including bodies not yet reflected in navigation.
+func _spawn_candidate(at: Vector3, foe: CharacterBody3D) -> Dictionary:
+	if nav.surface: at.y = nav.surface.height_at(Vector2(at.x, at.z))
+	if Vector2(at.x - player.global_position.x, at.z - player.global_position.z).length() <= spawn_clear(): return {}
+	if nav.blocked(nav.cell_of(at)): return {}
+	var ground := world_ray(at + Vector3.UP * 0.5, at - Vector3.UP * 0.5)
+	if ground.is_empty() or ground.normal.y < cos(foe.floor_max_angle): return {}
+	var pos: Vector3 = ground.position
+	if absf(pos.y - at.y) > 0.1: return {}
+	for offset in [Vector3.RIGHT, Vector3.LEFT, Vector3.FORWARD, Vector3.BACK]:
+		var edge: Vector3 = pos + offset * BlightedSprite.RADIUS
+		var support := world_ray(edge + Vector3.UP * 0.2, edge - Vector3.UP * 0.2)
+		if support.is_empty() or absf(support.position.y - pos.y) > 0.1 or support.normal.y < cos(foe.floor_max_angle): return {}
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = foe.get_node("Shape").shape
+	query.transform = Transform3D(Basis.IDENTITY, pos + Vector3.UP * (BlightedSprite.HEIGHT * 0.5 + 0.02))
+	query.collision_mask = 1
+	if not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty(): return {}
+	# Use current transforms: another actor may have moved/reset earlier in this same tick.
+	for other in enemies.values():
+		if other == foe or other.reserve or other.health.dead or not other.visible: continue
+		var d: Vector3 = other.global_position - pos
+		if absf(d.y) < BlightedSprite.HEIGHT and Vector2(d.x, d.z).length() < BlightedSprite.RADIUS * 2.0 + 0.05: return {}
+	return {"at": pos}
 
 func alive_count() -> int:
 	var n := 0
@@ -691,16 +953,42 @@ func alive_count() -> int:
 		if not e.reserve and not e.health.dead and e.visible: n += 1
 	return n
 
+# How far from the player a Sprite may come out: past its detection in the forest;
+# 20 m in the 120 x 80 m arena, which a 50 m detection would leave without a zone.
+func spawn_clear() -> float:
+	return BlightedSprite.AGGRO_R + 4.0 if world_kind == "forest" else 20.0
+
 func _free_zone() -> Dictionary:
-	var ok: Array = zones.filter(func(z): return Vector2(z.at.x - player.global_position.x, z.at.z - player.global_position.z).length() > BlightedSprite.AGGRO_R + 4.0)
+	var ok: Array = zones.filter(func(z): return Vector2(z.at.x - player.global_position.x, z.at.z - player.global_position.z).length() > spawn_clear())
 	return ok[spawn_rng.randi() % ok.size()] if not ok.is_empty() else {}
 
 func _to_reserve(e: CharacterBody3D) -> void:
+	e.set_dormant(true)
 	e.reserve = true
 	e.visible = false
 	e.get_node("Shape").disabled = true
 	e.velocity = Vector3.ZERO
 	e.aggroed = false
+
+# Initial scene construction precedes physics registration; use the conservative nav grid.
+func _initial_forest_spawn(at: Vector3, occupied: Array) -> Dictionary:
+	var candidates := [at]
+	var cell := nav.cell_of(at)
+	for z in range(-2,3):
+		for x in range(-2,3):
+			candidates.append(nav.centre_of(cell+Vector2i(x,z)))
+	candidates.sort_custom(func(a,b): return a.distance_squared_to(at)<b.distance_squared_to(at))
+	for p in candidates:
+		if nav.blocked(nav.cell_of(p)): continue
+		var clear := true
+		for other in occupied:
+			if Vector2(p.x-other.x,p.z-other.z).length_squared()<0.65*0.65:
+				clear = false
+				break
+		if clear:
+			if nav.surface: p.y = nav.surface.height_at(Vector2(p.x,p.z))
+			return {"at":p}
+	return {}
 
 # Tests: every enemy out of play (hidden, no collision, no AI) until the next
 # reset; the ids in `keep` stay as inert target dummies (visible, hittable, no AI).
@@ -709,6 +997,7 @@ func park_enemies(keep := []) -> void:
 	for id in enemies:
 		var e: CharacterBody3D = enemies[id]
 		e.inert = true
+		e.set_dormant(false)
 		e.aggroed = false
 		e.velocity = Vector3.ZERO
 		if id in keep: continue
@@ -718,9 +1007,6 @@ func park_enemies(keep := []) -> void:
 
 # Rank and level-ups get the top-centre banner [R15], not a small notice.
 # The 16-bit dither follows the world view's pixel grid (it changes with the window).
-func _sync_pixel_grid() -> void:
-	if art and lofi and lofi.viewport: art.set_low_res(Vector2(lofi.viewport.size))
-
 func _on_ranked(rank: String, points: int) -> void:
 	var AP = PageLibrary.AbilityPage
 	var from: String = AP.RANKS[maxi(0, AP.rank_index(rank) - 1)]
@@ -737,7 +1023,10 @@ func _on_leveled(level: int, points: int) -> void:
 
 # A notification (level up, rank up, page found or unlocked, not enough MP, on
 # cooldown...): newest last; the same text again only refreshes its timer.
+var notices_shown: Array[String] = [] # the last notices shown (tests read it; they expire from `notices`)
 func show_notice(text: String, seconds := 1.5) -> void:
+	notices_shown.append(text)
+	if notices_shown.size() > 20: notices_shown.pop_front()
 	notice = text
 	notice_time = seconds
 	for n in notices:
@@ -766,6 +1055,7 @@ func publish(_delta: float) -> void:
 	var pr: RefCounted = session.progression
 	var m: Dictionary = pr.mission()
 	var mission := ("Mission: %s (%d/%d)" % [m.text, m.progress, m.target]) if not m.is_empty() else "Rank %s" % pr.rank
+	if map1: mission = rules.hud_line(alive_count()) + "\n" + mission # Map 1's objectives line [spec §5]
 	if director.in_combat: mission += "\nIN COMBAT" + ("" if director.countdown(now) >= director.OUT_OF_COMBAT_S - 0.01 else "  (%.0f s)" % director.countdown(now))
 	if audio: audio.tick(_delta, director.in_combat)
 	var lines := []
@@ -773,22 +1063,100 @@ func publish(_delta: float) -> void:
 	var t := target_in_view()
 	hud.refresh({"level": pr.level, "rank": pr.rank, "hp": player.health.hp, "max_hp": player.health.max_hp,
 		"mp": pcombat.mp, "max_mp": pcombat.max_mp(now), "mission": mission, "slots": pcombat.slot_view(now),
-		"statuses": player_statuses(now), "prompt": "F  Pick up page" if t.kind == "page" else "", "notices": lines, "channel": channel_view(now)})
+		"statuses": player_statuses(now), "prompt": "F  Pick up page" if t.kind == "page" else "", "notices": lines, "channel": channel_view(now),
+		"now": now, "die": gambler.last_roll, "coins": gambler.purse if gambler.purse_equipped() else -1, "jackpot_at": gambler.jackpot_at, "addicted": gambler.addicted})
 	for id in enemies:
 		var e: CharacterBody3D = enemies[id]
 		if e.visible: e.set_statuses(effect_statuses(id, now))
-	if effects_panel.visible: effects_panel.refresh(effect_rows(now))
+	if training and training.active:
+		for d in training.dummies: training.set_statuses(d, effect_statuses(String(d.id), now)) # every debuff shows on a dummy too
 	grimoire_panel.tick() # the chant hint's countdown
 	if grimoire_panel.visible and grimoire_panel.tab == "effects": # live countdown, 4 times a second
 		_grim_fx_t += _delta
 		if _grim_fx_t >= 0.25:
 			_grim_fx_t = 0.0
 			grimoire_panel.refresh()
-	for id in enemies:
-		var e: CharacterBody3D = enemies[id]
-		e.set_burning(e.visible and not e.health.dead and effects.has(id, "Burn", now))
+	_show_burning(now)
+	_show_gambler(now)
 	damage_numbers.tick(_delta)
 	banner.tick(_delta)
+
+# Burn's look [2026-11-14]: only the vfx.embers_full burning Sprites nearest the camera
+# wear the Binbun flames (20 at once cost ~1.2 ms p50); the rest keep the orange glow, flickering.
+func _show_burning(now: float) -> void:
+	var lit: Array = []
+	for id in enemies:
+		var e: CharacterBody3D = enemies[id]
+		if e.visible and not e.health.dead and effects.has(id, "Burn", now): lit.append(e)
+		else: e.set_burning(false)
+	var cam := get_viewport().get_camera_3d()
+	var eye: Vector3 = cam.global_position if cam else player.global_position
+	if lit.size() > vfx.embers_full:
+		var distances := {}
+		for e in lit: distances[e] = eye.distance_squared_to(e.global_position)
+		lit.sort_custom(func(a, b): return distances[a] < distances[b])
+	for i in lit.size():
+		lit[i].set_burning(true, i < vfx.embers_full)
+		lit[i].burn_flicker(now)
+
+# The Gambler set's looks [2026-11-14]: Pocket Change (a loot glow over the head)
+# and Heavy Pockets (a loot ring and a coin pile at the feet) on the nearest
+# vfx.embers_full enemies that have them; Gambler's High, the Jackpot and
+# Gambling Addiction on the player. Each enemy's nodes are made once, on first need.
+var _gfx := {} # player loop kind -> node
+func _show_gambler(now: float) -> void:
+	var near: Array = []
+	for id in enemies:
+		var e: CharacterBody3D = enemies[id]
+		var pocket: bool = e.visible and not e.health.dead and effects.has(id, gambler.POCKET.id, now)
+		var heavy: bool = e.visible and not e.health.dead and effects.has(id, gambler.HEAVY_ID, now)
+		if pocket or heavy: near.append([e, pocket, heavy])
+		else: _enemy_gfx(e, false, false)
+	if training and training.active: # the Training Field's dummies wear the same marks
+		for d in training.dummies:
+			var dp: bool = effects.has(String(d.id), gambler.POCKET.id, now)
+			var dh: bool = effects.has(String(d.id), gambler.HEAVY_ID, now)
+			if dp or dh: near.append([d.body, dp, dh])
+			else: _enemy_gfx(d.body, false, false)
+	if near.size() > vfx.embers_full:
+		var eye: Vector3 = player.global_position
+		near.sort_custom(func(a, b): return eye.distance_squared_to(a[0].global_position) < eye.distance_squared_to(b[0].global_position))
+	for i in near.size():
+		var full: bool = i < vfx.embers_full
+		_enemy_gfx(near[i][0], near[i][1] and full, near[i][2], near[i][2] and full)
+	_player_gfx("gamblers_high", gambler.buff_left(gambler.HIGH_ID, now) > 0.0)
+	_player_gfx("jackpot", gambler.buff_left(gambler.JACKPOT_ID, now) > 0.0)
+	_player_gfx("all_in", not gambler.all_in.is_empty())
+	_player_gfx("all_in_won", gambler.modifier_left(gambler.ALL_IN_WIN_ID, "magic_pow", now) > 0.0)
+	_player_gfx("addiction", gambler.addicted)
+
+func _enemy_gfx(e: Node3D, pocket: bool, pile: bool, ring := false) -> void:
+	for spec in [["pocket_change", pocket], ["heavy_pockets", ring]]:
+		var key: String = "gfx_" + String(spec[0])
+		var fx: Node3D = e.get_meta(key) if e.has_meta(key) else null
+		if fx == null and spec[1]:
+			fx = Vfx.make_loop(spec[0])
+			if fx == null: continue
+			if spec[0] == "pocket_change" and not e is CharacterBody3D: fx.position.y = 3.25 # a dummy: above its total and icons
+			e.add_child(fx)
+			e.set_meta(key, fx)
+		if fx != null: Vfx.set_loop(fx, spec[1])
+	var p: Node3D = e.get_meta("gfx_pile") if e.has_meta("gfx_pile") else null
+	if p == null and pile:
+		p = Vfx.coin_pile()
+		if p == null: return
+		e.add_child(p)
+		e.set_meta("gfx_pile", p)
+	if p != null: p.visible = pile
+
+func _player_gfx(kind: String, on: bool) -> void:
+	var fx: Node3D = _gfx.get(kind)
+	if fx == null and on:
+		fx = Vfx.make_loop(kind)
+		if fx == null: return
+		player.add_child(fx)
+		_gfx[kind] = fx
+	if fx != null: Vfx.set_loop(fx, on)
 
 var _effect_full := {} # presentation: each effect instance's full length, for the sweep
 # Timed effects on a target as status icons: [{id, frac (time left / full), s}] [R12].
@@ -806,6 +1174,13 @@ func effect_statuses(target: String, now: float) -> Array:
 # The player's buffs and debuffs: Cultivate, Concuss, Sage Arts at work, and any effect on them.
 # The HUD's cast bar: {label, frac} while Dragon's Breath or Explosion runs, else {}.
 func channel_view(now: float) -> Dictionary:
+	if not spells.flight.is_empty():
+		var ph: String = spells.flight_phase()
+		match ph:
+			"climb": return {"label": "Flight of the Phoenix  rising (LMB: dive)", "frac": clampf((now - float(spells.flight.start)) / spells.FLIGHT.climb_s, 0.0, 1.0)}
+			"window": return {"label": "Flight of the Phoenix  choose a spot (LMB)", "frac": 1.0 - clampf((now - float(spells.flight.window_at)) / spells.FLIGHT.window_s, 0.0, 1.0)}
+			_: return {"label": "Flight of the Phoenix  diving", "frac": clampf((now - float(spells.flight.crash_start)) / spells.FLIGHT.crash_s, 0.0, 1.0)}
+	if not spells.calling.is_empty(): return {"label": "Call of the Phoenix  mark areas (LMB) %d/3" % spells.calling.areas.size(), "frac": 1.0 - clampf((now - float(spells.calling.start)) / spells.CALL.cast_s, 0.0, 1.0)}
 	if not spells.charge.is_empty(): return {"label": "Explosion  charging", "frac": spells.charge_fraction(now)}
 	if not spells.breath.is_empty(): return {"label": "Dragon's Breath", "frac": clampf((float(spells.breath.until) - now) / float(spells.BREATH.s), 0.0, 1.0)}
 	return {}
@@ -813,11 +1188,23 @@ func channel_view(now: float) -> Dictionary:
 func player_statuses(now: float) -> Array:
 	var out := []
 	if now < pcombat.cultivate_until:
-		var full: float = pcombat.loadout.skill_1.duration_s if pcombat.loadout.get("skill_1") != null and String(pcombat.loadout.skill_1.id) == "cultivate" else 10.0
+		var full := 10.0
+		for pg in pcombat.loadout.values():
+			if pg != null and String(pg.id) == "cultivate": full = pg.duration_s
 		out.append({"id": "Cultivate", "frac": (pcombat.cultivate_until - now) / maxf(full, 0.001), "s": pcombat.cultivate_until - now})
 	for m in session.stats.modifiers:
 		if m.id == "concuss" and m.stat == "mov_spd" and now < m.until:
 			out.append({"id": "Concuss", "frac": (m.until - now) / BlightedSprite.CONCUSS_S, "s": m.until - now})
+	if pcombat.rise_equipped(): out.append({"id": "Rise of the Phoenix", "frac": 1.0, "s": 0.0, "label": pcombat.rise_label()})
+	for g in [["Gambler's High", gambler.HIGH_ID, gambler.LET.high_s], ["Jackpot", gambler.JACKPOT_ID, gambler.LET.jackpot_s]]:
+		var left: float = gambler.buff_left(g[1], now)
+		if left > 0.0: out.append({"id": g[0], "frac": left / float(g[2]), "s": left})
+	if not gambler.all_in.is_empty(): out.append({"id": "All In", "frac": (float(gambler.all_in.until) - now) / gambler.ALL_IN.invuln_s, "s": float(gambler.all_in.until) - now})
+	for g2 in [["All In: Won", gambler.ALL_IN_WIN_ID, "magic_pow", gambler.ALL_IN.win_s], ["All In: Bust", gambler.ALL_IN_BUST_ID, "mov_spd", gambler.ALL_IN.bust_s]]:
+		var left2: float = gambler.modifier_left(g2[1], g2[2], now)
+		if left2 > 0.0: out.append({"id": g2[0], "frac": left2 / float(g2[3]), "s": left2})
+	if gambler.addicted: out.append({"id": "Gambling Addiction", "frac": 1.0, "s": 0.0, "label": gambler.addiction_label()})
+	if gambler.purse_equipped(): out.append({"id": "Where are my Coins?", "frac": float(gambler.purse) / float(gambler.PURSE.max), "s": 0.0, "label": "%d/%d" % [gambler.purse, gambler.PURSE.max]})
 	if pcombat.sage_active(now): # only while it restores (it rests at full HP and MP)
 		out.append({"id": "Sage Arts", "frac": 1.0, "s": 0.0})
 	out.append_array(effect_statuses("player", now))
@@ -828,16 +1215,15 @@ func player_statuses(now: float) -> Array:
 func new_map(seed := -1) -> bool:
 	var t0 := Time.get_ticks_usec()
 	var candidate_seed: int = seed if seed >= 0 else (fixed_map_seed if fixed_map_seed >= 0 else randi())
-	var candidate := DarkForest.generate(candidate_seed)
-	if candidate.is_empty(): return false
 	map_seed = candidate_seed
-	map = candidate
+	map = {"seed": candidate_seed}
 	spawn_rng.seed = map_seed ^ 0x5bd1
-	static_solids = _fixed_solids + DarkForest.scatter(_forest_node, map)
-	zones = map.zones
-	page_spots = map.pages
-	for id in page_pickups:
-		if page_spots.has(id): page_pickups[id].position = page_spots[id] + Vector3(0, 0.6, 0)
+	map1.reset(candidate_seed)
+	rules.reset(candidate_seed ^ 0x52554c)
+	if training: training.set_forest_portal(true) # the camp is back, its portal with it
+	nav.surface = map1
+	nav_climb.surface = map1
+	for id in page_pickups: page_pickups[id].set_meta("dropped", false)
 	map_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	return true
 
@@ -854,6 +1240,7 @@ func reset_run() -> void:
 	player.crouching = false
 	player._apply_height(player.STAND_HEIGHT)
 	player.apply_look()
+	player.health.max_hp = float(session.stats.value("max_hp", session.run.time)) # Max HP sizes the pool before the refill (1000 base since the rescale)
 	player.health.reset()
 	player.endurance.reset()
 	player.flashlight.visible = false
@@ -862,15 +1249,11 @@ func reset_run() -> void:
 	player.reset_movement()
 	_rebuild_navs()
 	nav_dirty = false
-	var n := 0
-	for id in enemies: # the six zones start occupied; the rest wait in the pool
-		var spec: Dictionary = zones[n % zones.size()]
-		enemies[id].reset_to(spec.at, spec.yaw, noise.last_id())
-		if n >= zones.size(): _to_reserve(enemies[id])
-		n += 1
+	var occupied := []
+	_place_roster(occupied)
 	dead_at.clear()
 	spawning = true
-	next_spawn = SPAWN_EVERY_S
+	next_spawn = FOREST_SPAWN_EVERY_S if world_kind == "forest" else SPAWN_EVERY_S
 	director.reset()
 	_sync_page_pickups()
 	if not session.progression.ranked.is_connected(_on_ranked): session.progression.ranked.connect(_on_ranked)
@@ -887,10 +1270,14 @@ func reset_run() -> void:
 	hazards.reset()
 	projectiles.reset()
 	spells.reset()
+	gambler.reset()
 	if vfx: vfx.reset()
 	if audio: audio.reset()
 	effects = EffectSystem.new()
+	effects.resist_fn = effect_resist
 	projectiles.effects = effects
+	arrows.reset()
+	player_knock = {}
 	effect_packets.clear()
 	_effect_full.clear()
 	if damage_numbers: damage_numbers.clear()
@@ -900,3 +1287,198 @@ func reset_run() -> void:
 	was_on_floor = true
 	for l in lamps: l.light_energy = l.get_meta("base_energy", 0.7)
 	if prompt: prompt.text = ""
+
+# ---- Map 1, the Dark Forest [Sir, 2026-11-20; docs/spec-map1-dark-forest.md] ----------
+
+## Pages still to find (Map 1's page pool): available and not yet found.
+func page_pool() -> Array:
+	return DarkForest.page_ids().filter(func(id): return not session.grimoire.is_found(id) and not bool(page_pickups[id].get_meta("dropped", false)) if page_pickups.has(id) else false)
+
+func pages_missing() -> bool:
+	return not page_pool().is_empty()
+
+## A page drops where an enemy died: picked up by touching it (F).
+func drop_page(at: Vector3) -> String:
+	var pool := page_pool()
+	if pool.is_empty(): return ""
+	var id: String = pool[spawn_rng.randi() % pool.size()]
+	var pg: Node3D = page_pickups[id]
+	pg.global_position = Vector3(at.x, map1.height_at(Vector2(at.x, at.z)) + 0.6, at.z)
+	pg.set_meta("dropped", true)
+	_sync_page_pickups()
+	show_notice("A page fell!", 2.5)
+	return id
+
+## A pooled enemy of `kind` (reserve), made on demand when the pool is used up.
+func _m1_enemy(kind: String) -> CharacterBody3D:
+	for e in enemies.values():
+		if e.kind == kind and e.reserve and not dead_at.has(e.enemy_id): return e
+	var n := 1
+	while enemies.has("%s_%d" % [kind, n]): n += 1
+	var foe: CharacterBody3D = BlightedSprite.new() if kind == "sprite" else (ForestGhoul.new() if kind == "ghoul" else KostasMortus.new())
+	_add_enemy(get_node("Enemies"), "%s_%d" % [kind, n], foe, zones[0])
+	return foe
+
+## Brings one enemy of `kind` into play at `at`, hunting the player; `fade`: it
+## fades in from the mist over M1_FADE_S.
+func _m1_place(kind: String, at: Vector3, fade := false) -> CharacterBody3D:
+	var e := _m1_enemy(kind)
+	at.y = map1.height_at(Vector2(at.x, at.z))
+	var to := player.global_position - at
+	e.reset_to(at, rad_to_deg(atan2(-to.x, -to.z)), noise.last_id())
+	e.alert_to(player.global_position)
+	_m1_set_fade(e, 1.0 if fade else 0.0)
+	if fade: e.set_meta("m1_fade", 0.0)
+	elif e.has_meta("m1_fade"): e.remove_meta("m1_fade")
+	return e
+
+## Enemies whose ground has gone (a tile hidden behind an exit, a chunk or pathway
+## unloaded behind a seal) fall: any well under the ground goes back to the pool.
+func _m1_lost() -> void:
+	for e in enemies.values():
+		if e.reserve or not e.visible: continue
+		if e.global_position.y < map1.height_at(Vector2(e.global_position.x, e.global_position.z)) - 5.0:
+			_to_reserve(e)
+			dead_at.erase(e.enemy_id)
+
+func _m1_set_fade(e: Node3D, amount: float) -> void:
+	for g in e.find_children("*", "GeometryInstance3D", true, false): (g as GeometryInstance3D).transparency = amount
+
+func _m1_fades(delta: float) -> void:
+	for e in enemies.values():
+		if not e.has_meta("m1_fade"): continue
+		var t: float = float(e.get_meta("m1_fade")) + delta
+		if t >= M1_FADE_S or e.reserve or e.health.dead:
+			_m1_set_fade(e, 0.0)
+			e.remove_meta("m1_fade")
+		else:
+			e.set_meta("m1_fade", t)
+			_m1_set_fade(e, 1.0 - t / M1_FADE_S)
+
+## A combat spawn: on the ring just past the fog, never in view, on open ground
+## of the chunk (in the wrap, within half a field on each axis, so it is never
+## re-centred into sight).
+func _m1_spawn_ring(kind: String) -> CharacterBody3D:
+	for attempt in 32: # only diagonals pass (both axes within half a field, 32 m+ out): retry
+		var a := spawn_rng.randf() * TAU
+		var r := spawn_rng.randf_range(M1_RING.x, M1_RING.y)
+		var off := Vector3(cos(a) * r, 0, sin(a) * r)
+		if absf(off.x) > Map1World.HALF - 1.0 or absf(off.z) > Map1World.HALF - 1.0: continue
+		var at := player.global_position + off
+		if not map1.in_chunk(map1.chunk, at): continue
+		at.y = map1.height_at(Vector2(at.x, at.z))
+		if nav.blocked(nav.cell_of(at)): continue
+		var crowded := false
+		for o in enemies.values():
+			if not o.reserve and o.visible and Vector2(o.global_position.x - at.x, o.global_position.z - at.z).length() < 1.2: crowded = true
+		if crowded: continue
+		return _m1_place(kind, at, true)
+	return null
+
+## One frame of Map 1 (before the enemies think): the map, the rules, the wrap.
+func _map1_step(delta: float, now: float) -> void:
+	var p := player.global_position
+	for ev in map1.update(p, delta):
+		match String(ev.event):
+			"entered_pathway": # no pathway encounters [Sir, 2026-11-22]
+				rules.enter_pathway()
+				nav_dirty = true
+			"entered_chunk":
+				rules.enter_chunk()
+				nav_dirty = true
+			"exit_taken":
+				rules.enter_pathway()
+				nav_dirty = true
+			"camp_sealed":
+				if training: training.set_forest_portal(false) # nothing of the camp stays behind
+				nav_dirty = true
+			"wrap_shift": # the field repeats every CHUNK: shift the grids, no rebuild (8 ms) [perf]
+				var sh: Vector2 = Vector2(ev.shift) * Map1World.CHUNK
+				nav.origin += sh
+				nav_climb.origin += sh
+				nav.revision += 1
+				nav_climb.revision += 1
+			_: nav_dirty = true
+	if nav_dirty:
+		_rebuild_navs()
+		nav_dirty = false
+	# The rules: a fight starts and ends behind a 5 m blackout; the world swaps at its middle [plan-map1-visibility].
+	for ev in rules.step(delta, map1.settled(p), alive_count(), pages_missing()):
+		match String(ev.event):
+			"combat_start":
+				map1.start_combat()
+				nav_dirty = true
+			"spawn": if spawning: _m1_spawn_ring(String(ev.kind))
+			"combat_end": # the fog closes in: when the next wave comes, as a notice top-centre [Sir, 2026-11-22]
+				var cd := int(Map1Rules.T.cooldown_s)
+				show_notice(NEXT_WAVE_NOTICE % ("%d:%02d" % [cd / 60, cd % 60]), NEXT_WAVE_NOTICE_S)
+			"exits_open":
+				var at: Vector3 = map1.end_combat(p, int(ev.count))
+				_m1_into_square(at)
+				player.global_position = at + Vector3(0, 0.05, 0) # the middle of the closed field
+				player.velocity = Vector3.ZERO
+				fall_speed = 0.0
+				p = player.global_position
+				nav_dirty = true
+	if nav_dirty:
+		_rebuild_navs()
+		nav_dirty = false
+	var reg: Dictionary = map1.region_of(p)
+	if not map1.chunk.is_empty() and map1.chunk.wrap: _m1_recentre()
+	_m1_fades(delta)
+	_m1_lost()
+	if not (training and training.active) and art: # Map 1's fog [layout pass §4]: the camp's long view, the forest's breathing 24-32 m
+		var env: Environment = null
+		for n in get_children():
+			if n is WorldEnvironment: env = (n as WorldEnvironment).environment
+		var zone: String = String(reg.kind) if String(reg.kind) != "" else "pathway"
+		if zone == "chunk" and not rules.phase in ["starting", "combat", "ending"]: zone = "peace" # a closed field: thin banks for its 60 m view
+		var vis: float = map1.visibility_at(p, rules)
+		map1.vis_now = vis
+		var preset := String(session.settings.gfx_value("preset"))
+		var peace_reach: float = maxf(session.settings.grass_distance, float(map1.PEACE_GRASS.get(preset, session.settings.grass_distance)))
+		map1.set_grass_reach(peace_reach if zone == "peace" else session.settings.grass_distance) # farther grass only in a closed field
+		var fog_end: float = map1.fog.update(delta, p, player.camera, zone, map1.height_at(Vector2(p.x, p.z)), vis, 0.0)
+		if env:
+			env.fog_depth_end = fog_end
+			env.fog_depth_begin = ArtDirection.FOG_BEGIN if zone == "camp" else (map1.fog.PEACE_BEGIN if zone == "peace" else map1.fog.HAZE_BEGIN) # the close haze in the forest
+			env.fog_depth_curve = 0.8 if zone == "camp" else (map1.fog.PEACE_CURVE if zone == "peace" else map1.fog.HAZE_CURVE) # a closed field: clear near, the fog gathered toward its 60 m
+		player.camera.far = maxf(ArtDirection.FAR_CLIP, fog_end + 8.0)
+		if pcombat.wand and pcombat.wand.lamp: pcombat.wand.lamp.light_volumetric_fog_energy = map1.fog.WAND_FOG if zone != "camp" else 1.0 # the wand's cone lights the fog
+
+const NEXT_WAVE_NOTICE := "The field is clear · next wave in %s"
+const NEXT_WAVE_NOTICE_S := 7.0 # through the blackout (3.5 s) and well after the fog lifts
+
+## The combat-end swap: dropped pages (still to pick up) move to their copy inside the
+## closed field round `at` (the field repeats every CHUNK).
+func _m1_into_square(at: Vector3) -> void:
+	for id in page_pickups:
+		var pg: Node3D = page_pickups[id]
+		if not pg.visible: continue
+		var d: Vector3 = pg.global_position - at
+		d.x = fposmod(d.x + Map1World.HALF, Map1World.CHUNK) - Map1World.HALF
+		d.z = fposmod(d.z + Map1World.HALF, Map1World.CHUNK) - Map1World.HALF
+		var q := at + Vector3(d.x, 0, d.z)
+		q.y = map1.height_at(Vector2(q.x, q.z)) + 0.6
+		pg.global_position = q
+
+## The wrap: every enemy and dropped page at its nearest image of the field
+## round the player (a shift of a whole field, always beyond the fog).
+func _m1_recentre() -> void:
+	var p := player.global_position
+	var period := Map1World.CHUNK
+	var half := Map1World.HALF
+	for e in enemies.values():
+		if e.reserve or not e.visible: continue
+		var d: Vector3 = e.global_position - p
+		var sh := Vector3(-period * signf(d.x) if absf(d.x) > half else 0.0, 0, -period * signf(d.z) if absf(d.z) > half else 0.0)
+		if sh == Vector3.ZERO: continue
+		e.global_position += sh
+		e.origin += sh
+		e.path.clear()
+	for id in page_pickups:
+		var pg: Node3D = page_pickups[id]
+		if not pg.visible: continue
+		var d2: Vector3 = pg.global_position - p
+		var sh2 := Vector3(-period * signf(d2.x) if absf(d2.x) > half else 0.0, 0, -period * signf(d2.z) if absf(d2.z) > half else 0.0)
+		if sh2 != Vector3.ZERO: pg.global_position += sh2

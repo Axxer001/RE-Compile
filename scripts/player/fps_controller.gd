@@ -386,7 +386,7 @@ func simulate(intent: Dictionary, delta: float, now: float) -> void:
 		dash_dir = wish if wish != Vector3.ZERO else _flat_forward()
 		state = Move.DASH
 		state_t = 0.0
-		health.grant_immunity(now + tuning.dash_iframes_s, ["*"], now) # all damage (S8)
+		health.grant_immunity(now + tuning.dash_iframes_s, ["*"], now, "dash") # all damage (S8)
 		if crouching: _set_crouch(false)
 	dash_request = false
 	var moved := false # the state made this tick's move itself
@@ -1030,20 +1030,6 @@ func _superglide(now: float) -> void:
 	state = Move.AIR
 	mantle = {}
 	superglides += 1
-
-# Where the hands go while mantling or climbing (presentation; the arms rig
-# plants on it): {point, normal} in world space, or {} when the hands are free.
-# Mantle: the ledge's top edge in front of the player, facing up. Climb: the
-# wall in front of the eyes, facing out.
-func hand_contact() -> Dictionary:
-	if state == Move.MANTLE and not mantle.is_empty():
-		var n: Vector3 = mantle.normal
-		var edge: Vector3 = Vector3(mantle.target) + n * (RADIUS + 0.05)
-		return {"point": Vector3(edge.x, float(mantle.top), edge.z), "normal": Vector3.UP}
-	if state == Move.WALLCLIMB and wall_n != Vector3.ZERO:
-		var at := global_position + Vector3(0, height() - 0.35, 0) - wall_n * RADIUS
-		return {"point": at, "normal": wall_n}
-	return {}
 
 # ---- step-up ---------------------------------------------------------------------
 

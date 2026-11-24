@@ -66,7 +66,7 @@ func validate_forest_seeds() -> void:
 		for z in m.zones: zone_path = minf(zone_path, Forest.centreline_dist(Vector2(z.at.x, z.at.z)))
 		fewest = mini(fewest, m.trees.size())
 		most = maxi(most, m.trees.size())
-	check(bad.is_empty(), "%d forest seeds all pass R11's rules (reachable; pages >= 25 m from the start, >= 20 m apart, >= 15 m from zones; nothing within 3 m of a path or in the camp) %s" % [FOREST_SEEDS, str(bad)])
+	check(bad.is_empty(), "%d forest seeds all pass R11's rules (pages >= 25 m from the start, >= 20 m apart, >= 15 m from zones; nothing within 3 m of a path or in the camp) %s" % [FOREST_SEEDS, str(bad)])
 	check(near_start >= 25.0 and near_pages >= 20.0 and near_zone >= 15.0 and zone_path >= 3.0, "over %d seeds, the closest: page to start %.1f m (>= 25), page to page %.1f (>= 20), page to zone %.1f (>= 15), zone to a path %.1f (>= 3)" % [FOREST_SEEDS, near_start, near_pages, near_zone, zone_path])
 	check(most > fewest + 100 and fewest > 400, "forest tree density varies by seed (%d to %d trees)" % [fewest, most])
 
@@ -96,13 +96,14 @@ func validate_pages() -> void:
 			var ls: Array = v.lines
 			if not String(ls[0]).begins_with("#include") or not "int main() {" in ls or String(ls[ls.size() - 1]) != "}" or not ls.any(func(l): return String(l).strip_edges() == "return 0;"): cpp_ok = false
 			for l in ls:
+				if RegEx.create_from_string("^\\s*(case\\s.+|default):\\s*$").search(String(l)) != null: continue # C++ switch labels end in a colon
 				if RegEx.create_from_string("^\\s*(def|class|elif|import)\\b|:\\s*$|\\bprint\\(").search(String(l)) != null: py_left.append(l)
 		check(cpp_ok and py_left.is_empty(), "page %s: every variant is a C++ program (#include ... int main() { ... return 0; }), no Python %s" % [id, str(py_left.slice(0, 2))])
 	# One beginner C++ lesson per page, in course order.
 	var order_ok := true
 	for i in Lib.IDS.size():
 		if not String(Lib.TEACH[Lib.IDS[i]][0]).begins_with(Lib.LESSONS[i] + ":"): order_ok = false
-	check(order_ok and Lib.LESSONS == ["C++ Intro", "C++ Get Started", "C++ Syntax", "C++ Output", "C++ Comments", "C++ Variables", "C++ User Input", "C++ Data Types"], "pages teach C++ in course order: %s" % ", ".join(Lib.LESSONS))
+	check(order_ok and Lib.LESSONS == ["C++ Intro", "C++ Get Started", "C++ Syntax", "C++ Output", "C++ Comments", "C++ Variables", "C++ User Input", "C++ Data Types", "C++ Operators", "C++ Strings", "C++ Math", "C++ Booleans", "C++ If...Else", "C++ Switch", "C++ While Loop"], "pages teach C++ in course order: %s" % ", ".join(Lib.LESSONS))
 
 func validate_project() -> void:
 	check(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/main.tscn", "main scene is scenes/main.tscn")
@@ -125,10 +126,16 @@ func validate_input_map() -> void:
 			check(not seen.has(key), "%s for %s not also bound to %s" % [key, action, seen.get(key, "")])
 			seen[key] = action
 	# Grimoire key map (docs/pivot-grimoire-plan.md §3).
-	var want := {"dash": KEY_SHIFT, "skill_1": KEY_E, "skill_2": KEY_Q, "spell_1": KEY_1, "spell_2": KEY_2, "spell_3": KEY_3, "interact": KEY_F, "grimoire": KEY_TAB}
+	# Held grimoire [Sir, 2026-11-20]: 1-4 turn to a spell page, 5 the status page; Q and E unbound.
+	var want := {"dash": KEY_SHIFT, "page_1": KEY_1, "page_2": KEY_2, "page_3": KEY_3, "page_4": KEY_4, "page_5": KEY_5, "interact": KEY_F, "grimoire": KEY_TAB}
 	for a in want: check(InputMap.has_action(a) and InputMap.action_get_events(a)[0].physical_keycode == want[a], "%s is %s" % [a, OS.get_keycode_string(want[a])])
 	check(InputMap.action_get_events("attack")[0].button_index == MOUSE_BUTTON_LEFT and InputMap.action_get_events("special")[0].button_index == MOUSE_BUTTON_RIGHT, "LMB basic attack, RMB special attack")
-	for gone in ["sprint", "aim", "reload", "throw", "cycle_throwable", "bullet_time", "flashlight", "slot_4", "drop", "inventory"]:
+	var qe_free := true
+	for action in InputMap.get_actions():
+		for e in InputMap.action_get_events(action):
+			if e is InputEventKey and (e.physical_keycode == KEY_E or (e.physical_keycode == KEY_Q and action != &"toggle_book")): qe_free = false
+	check(qe_free, "E is unbound (reserved); Q only stows/equips the held book (toggle_book) [2026-11-20]")
+	for gone in ["sprint", "aim", "reload", "throw", "cycle_throwable", "bullet_time", "flashlight", "slot_4", "drop", "inventory", "skill_1", "skill_2", "spell_1", "spell_2", "spell_3"]:
 		check(not InputMap.has_action(gone), "shooter action %s is retired" % gone)
 
 # Each folder under assets/ (two levels) must be named in the licence ledger.

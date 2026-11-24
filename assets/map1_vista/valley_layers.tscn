@@ -1,0 +1,48 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="highlands.obj" id="highlands"]
+[ext_resource type="ArrayMesh" path="woodline.obj" id="woodline"]
+
+[sub_resource type="StandardMaterial3D" id="highlands_mat"]
+shading_mode = 0
+cull_mode = 2
+albedo_color = Color(0.065, 0.085, 0.105, 1)
+
+[sub_resource type="StandardMaterial3D" id="woodline_mat"]
+shading_mode = 0
+cull_mode = 2
+albedo_color = Color(0.033, 0.057, 0.048, 1)
+
+[sub_resource type="StandardMaterial3D" id="haze"]
+transparency = 1
+shading_mode = 0
+cull_mode = 2
+albedo_color = Color(0.14, 0.19, 0.19, 0.055)
+
+[sub_resource type="QuadMesh" id="veil"]
+size = Vector2(116, 6)
+
+[node name="ValleyLayers" type="Node3D"]
+
+[node name="highlands" type="MeshInstance3D" parent="."]
+mesh = ExtResource("highlands")
+material_override = SubResource("highlands_mat")
+cast_shadow = 0
+
+[node name="woodline" type="MeshInstance3D" parent="."]
+mesh = ExtResource("woodline")
+material_override = SubResource("woodline_mat")
+cast_shadow = 0
+
+[node name="ValleyMist1" type="MeshInstance3D" parent="."]
+position = Vector3(-9, 1, 67)
+mesh = SubResource("veil")
+material_override = SubResource("haze")
+cast_shadow = 0
+
+[node name="ValleyMist2" type="MeshInstance3D" parent="."]
+position = Vector3(12, 1.8, 85)
+mesh = SubResource("veil")
+material_override = SubResource("haze")
+cast_shadow = 0
+
